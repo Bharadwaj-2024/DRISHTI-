@@ -14,3 +14,6 @@ packaging==25.0
 urllib3==2.2.2
 yt-dlp>=2024.1.1
 reportlab>=4.2.0
+librosa>=0.10.0
+mediapipe>=0.10.0
+soundfile>=0.12.1

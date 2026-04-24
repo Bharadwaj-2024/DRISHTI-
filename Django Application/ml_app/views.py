@@ -19,6 +19,11 @@ from .forms import VideoUploadForm
 from .models import DeepfakeModel
 
 try:
+    from .audio_lipsync import full_audio_lipsync_analysis
+except Exception:
+    full_audio_lipsync_analysis = None
+
+try:
     import cv2
 except Exception:
     cv2 = None
@@ -621,6 +626,15 @@ def generate_demo_frames(video_path, num_frames=6):
     fake_score = 0
     real_score = 0
 
+    # ── Audio + Lip-sync analysis ────────────────────────────────────────────
+    audio_analysis = {}
+    if full_audio_lipsync_analysis is not None:
+        try:
+            audio_analysis = full_audio_lipsync_analysis(video_path, sample_fps=8.0)
+        except Exception as _ae:
+            print(f"[DRISHTI] Audio analysis error: {_ae}")
+            audio_analysis = {}
+
     if cv2 is None:
         lowered_name = video_name.lower()
         inferred_fake = any(keyword in lowered_name for keyword in ["army", "ispr", "jaishankar", "modi", "sindoor", "general"])
@@ -824,6 +838,16 @@ def generate_demo_frames(video_path, num_frames=6):
         osint_hits = sum(1 for k in osint_keywords if k in lowered_name)
         osint_score = _clamp(2.0 + osint_hits * 4.0)  # max ~34% even with all keywords, but video is authentic
 
+    # ── Audio + Lip-sync signal scores ───────────────────────────────────────
+    _al = audio_analysis  # shorthand
+    _al_available = _al.get("available", False)
+    audio_fake_signal_score = _al.get("audio_fake_score", av_sync_score) if _al_available else av_sync_score
+    lipsync_signal_score    = _al.get("lipsync_score",    lip_sync_score) if _al_available else lip_sync_score
+
+    _al_markers = _al.get("audio_markers", {})
+    _al_corr    = _al.get("correlation", 0.0)
+    _al_lip_n   = _al.get("lip_frames_sampled", 0)
+
     signals = [
         _make_signal(
             "Face-swap detector",
@@ -832,22 +856,30 @@ def generate_demo_frames(video_path, num_frames=6):
             f"Laplacian sharpness mean {avg_laplacian:.1f}, variance {std_laplacian:.1f}. {'Anomalies detected.' if is_likely_fake else 'No significant artifacts found.'}",
         ),
         _make_signal(
-            "Lip-sync anomaly",
-            lip_sync_score,
-            "Uses motion regularity as a proxy for speech-driven facial movement consistency.",
-            f"Frame-diff mean {avg_frame_diff:.1f}, volatility {std_frame_diff:.1f}. {'Irregular motion pattern.' if is_likely_fake else 'Motion pattern within natural range.'}",
+            "AI Voice Synthesis",
+            audio_fake_signal_score,
+            "Analyses spectral flatness, MFCC variance, pitch (F0) standard deviation, and pause regularity for AI synthesis markers.",
+            (
+                f"Pitch std {_al_markers.get('pitch_std_hz', 0):.1f} Hz, "
+                f"MFCC var {_al_markers.get('mfcc_variance', 0):.0f}, "
+                f"spectral flatness {_al_markers.get('mean_spectral_flatness', 0):.4f}. "
+                + ("AI voice markers detected." if audio_fake_signal_score >= 55 else "Audio within natural human speech range.")
+            ) if _al_available else "Audio analysis unavailable (install librosa + ffmpeg).",
+        ),
+        _make_signal(
+            "Lip-sync integrity",
+            lipsync_signal_score,
+            "Correlates mouth-openness landmarks (MediaPipe FaceMesh) with audio RMS energy frame-by-frame.",
+            (
+                f"Pearson r={_al_corr:.3f} across {_al_lip_n} sampled frames. "
+                + ("Significant lip-audio mismatch — deepfake indicator." if lipsync_signal_score >= 60 else "Lip movements align with audio energy.")
+            ) if _al_available else "Lip-sync analysis unavailable (install mediapipe + ffmpeg).",
         ),
         _make_signal(
             "Metadata forensics",
             metadata_score,
             "Flags container types and durations common in repackaged synthetic clips.",
             f"Container {extension or 'unknown'}, duration {duration_seconds:.1f}s. {'Suspicious packaging.' if is_likely_fake else 'Normal file metadata.'}",
-        ),
-        _make_signal(
-            "Audio-visual sync proxy",
-            av_sync_score,
-            "Checks whether facial motion cadence aligns with natural speech dynamics.",
-            f"Motion score {avg_frame_diff:.1f} at {fps:.1f} fps. {'Sync mismatch detected.' if is_likely_fake else 'Sync within expected range.'}",
         ),
         _make_signal(
             "OSINT conflict alignment",
@@ -886,6 +918,7 @@ def generate_demo_frames(video_path, num_frames=6):
             if is_likely_fake
             else "Store this scan as a baseline authentic sample unless new narrative context emerges."
         ),
+        "audio_analysis": audio_analysis,
     }
 
 

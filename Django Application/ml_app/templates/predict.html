@@ -354,7 +354,157 @@
         <p class="muted mb-0">{{ osint_context.narrative }}</p>
     </div>
 
+    <!-- ── AUDIO & LIP-SYNC ANALYSIS ─────────────────────────────────────── -->
+    {% if analysis.audio_analysis.available %}
+    <div class="panel p-4 p-lg-5 mb-4" style="border: 1px solid rgba({% if analysis.audio_analysis.combined_score >= 65 %}255,60,60{% elif analysis.audio_analysis.combined_score >= 40 %}255,130,40{% else %}74,222,128{% endif %},0.25);">
+        <div class="section-title mb-4">
+            <div>
+                <h2><i class="fas fa-waveform-lines me-2" style="color:#d8b15a;"></i>Audio &amp; Lip-Sync Analysis</h2>
+                <p class="muted mb-0">Real audio deepfake markers + frame-level lip-openness vs. audio energy correlation.</p>
+            </div>
+            <span class="status-pill {% if analysis.audio_analysis.combined_score >= 65 %}critical{% elif analysis.audio_analysis.combined_score >= 40 %}elevated{% else %}low{% endif %}">
+                {% if analysis.audio_analysis.combined_score >= 65 %}AI Synthetic{% elif analysis.audio_analysis.combined_score >= 40 %}Uncertain{% else %}Natural{% endif %}
+            </span>
+        </div>
+
+        <!-- Top-line scores -->
+        <div class="row g-4 mb-4">
+            <div class="col-md-4">
+                <div class="metric-card h-100">
+                    <div class="muted mb-1">Combined Score</div>
+                    <div class="metric-value {% if analysis.audio_analysis.combined_score >= 65 %}tone-critical{% elif analysis.audio_analysis.combined_score >= 40 %}tone-elevated{% else %}tone-low{% endif %}" style="font-size:2rem;">
+                        {{ analysis.audio_analysis.combined_score }}%
+                    </div>
+                    <div class="muted mt-1" style="font-size:0.78rem;">Higher = more likely AI-generated</div>
+                    <div class="progress mt-2" style="height:8px; background:rgba(255,255,255,0.07);">
+                        <div class="progress-bar" style="width:{{ analysis.audio_analysis.combined_score }}%;
+                            background: {% if analysis.audio_analysis.combined_score >= 65 %}linear-gradient(90deg,#ff4444,#ff8888){% elif analysis.audio_analysis.combined_score >= 40 %}linear-gradient(90deg,#d8b15a,#ffcc44){% else %}linear-gradient(90deg,#22c55e,#4ade80){% endif %};"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="metric-card h-100">
+                    <div class="muted mb-1">AI Voice Synthesis</div>
+                    <div class="metric-value {% if analysis.audio_analysis.audio_fake_score >= 65 %}tone-critical{% elif analysis.audio_analysis.audio_fake_score >= 40 %}tone-elevated{% else %}tone-low{% endif %}" style="font-size:2rem;">
+                        {{ analysis.audio_analysis.audio_fake_score }}%
+                    </div>
+                    <div class="muted mt-1" style="font-size:0.78rem;">Spectral + MFCC + Pitch + Pauses</div>
+                    <div class="progress mt-2" style="height:8px; background:rgba(255,255,255,0.07);">
+                        <div class="progress-bar" style="width:{{ analysis.audio_analysis.audio_fake_score }}%;
+                            background: {% if analysis.audio_analysis.audio_fake_score >= 65 %}linear-gradient(90deg,#ff4444,#ff8888){% elif analysis.audio_analysis.audio_fake_score >= 40 %}linear-gradient(90deg,#d8b15a,#ffcc44){% else %}linear-gradient(90deg,#22c55e,#4ade80){% endif %};"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="metric-card h-100">
+                    <div class="muted mb-1">Lip-Sync Mismatch</div>
+                    <div class="metric-value {% if analysis.audio_analysis.lipsync_score >= 65 %}tone-critical{% elif analysis.audio_analysis.lipsync_score >= 40 %}tone-elevated{% else %}tone-low{% endif %}" style="font-size:2rem;">
+                        {{ analysis.audio_analysis.lipsync_score }}%
+                    </div>
+                    <div class="muted mt-1" style="font-size:0.78rem;">Pearson r = {{ analysis.audio_analysis.correlation }} &nbsp;|&nbsp; {{ analysis.audio_analysis.lip_frames_sampled }} frames</div>
+                    <div class="progress mt-2" style="height:8px; background:rgba(255,255,255,0.07);">
+                        <div class="progress-bar" style="width:{{ analysis.audio_analysis.lipsync_score }}%;
+                            background: {% if analysis.audio_analysis.lipsync_score >= 65 %}linear-gradient(90deg,#ff4444,#ff8888){% elif analysis.audio_analysis.lipsync_score >= 40 %}linear-gradient(90deg,#d8b15a,#ffcc44){% else %}linear-gradient(90deg,#22c55e,#4ade80){% endif %};"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Audio sub-markers -->
+        {% if analysis.audio_analysis.audio_markers.available %}
+        <div class="section-title mb-3" style="border:none; padding:0;">
+            <h3 style="font-size:1rem; text-transform:uppercase; letter-spacing:.08em; color:var(--muted);">Audio Marker Breakdown</h3>
+        </div>
+        <div class="row g-3">
+
+            <div class="col-md-6">
+                <div class="panel-soft p-3">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                        <div>
+                            <strong>Spectral Flatness</strong>
+                            <div class="muted" style="font-size:0.8rem;">AI voices are unnaturally flat or over-tonal (value: {{ analysis.audio_analysis.audio_markers.mean_spectral_flatness }})</div>
+                        </div>
+                        <div class="metric-value {% if analysis.audio_analysis.audio_markers.spectral_flatness_score >= 65 %}tone-critical{% elif analysis.audio_analysis.audio_markers.spectral_flatness_score >= 40 %}tone-elevated{% else %}tone-low{% endif %}" style="font-size:1.3rem; min-width:52px; text-align:right;">{{ analysis.audio_analysis.audio_markers.spectral_flatness_score }}%</div>
+                    </div>
+                    <div class="progress" style="height:6px; background:rgba(255,255,255,0.07);">
+                        <div class="progress-bar" style="width:{{ analysis.audio_analysis.audio_markers.spectral_flatness_score }}%; background:linear-gradient(90deg,#d8b15a,#ff7d7d);"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-6">
+                <div class="panel-soft p-3">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                        <div>
+                            <strong>MFCC Variance</strong>
+                            <div class="muted" style="font-size:0.8rem;">Natural speech has high MFCC variation (var: {{ analysis.audio_analysis.audio_markers.mfcc_variance }})</div>
+                        </div>
+                        <div class="metric-value {% if analysis.audio_analysis.audio_markers.mfcc_variance_score >= 65 %}tone-critical{% elif analysis.audio_analysis.audio_markers.mfcc_variance_score >= 40 %}tone-elevated{% else %}tone-low{% endif %}" style="font-size:1.3rem; min-width:52px; text-align:right;">{{ analysis.audio_analysis.audio_markers.mfcc_variance_score }}%</div>
+                    </div>
+                    <div class="progress" style="height:6px; background:rgba(255,255,255,0.07);">
+                        <div class="progress-bar" style="width:{{ analysis.audio_analysis.audio_markers.mfcc_variance_score }}%; background:linear-gradient(90deg,#d8b15a,#ff7d7d);"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-6">
+                <div class="panel-soft p-3">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                        <div>
+                            <strong>Pitch (F0) Variance</strong>
+                            <div class="muted" style="font-size:0.8rem;">Monotone pitch = AI. Natural speech std &gt; 20 Hz (std: {{ analysis.audio_analysis.audio_markers.pitch_std_hz }} Hz)</div>
+                        </div>
+                        <div class="metric-value {% if analysis.audio_analysis.audio_markers.pitch_variance_score >= 65 %}tone-critical{% elif analysis.audio_analysis.audio_markers.pitch_variance_score >= 40 %}tone-elevated{% else %}tone-low{% endif %}" style="font-size:1.3rem; min-width:52px; text-align:right;">{{ analysis.audio_analysis.audio_markers.pitch_variance_score }}%</div>
+                    </div>
+                    <div class="progress" style="height:6px; background:rgba(255,255,255,0.07);">
+                        <div class="progress-bar" style="width:{{ analysis.audio_analysis.audio_markers.pitch_variance_score }}%; background:linear-gradient(90deg,#d8b15a,#ff7d7d);"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-6">
+                <div class="panel-soft p-3">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                        <div>
+                            <strong>Pause Regularity</strong>
+                            <div class="muted" style="font-size:0.8rem;">AI speech has unnaturally regular or absent breath pauses</div>
+                        </div>
+                        <div class="metric-value {% if analysis.audio_analysis.audio_markers.silence_pattern_score >= 65 %}tone-critical{% elif analysis.audio_analysis.audio_markers.silence_pattern_score >= 40 %}tone-elevated{% else %}tone-low{% endif %}" style="font-size:1.3rem; min-width:52px; text-align:right;">{{ analysis.audio_analysis.audio_markers.silence_pattern_score }}%</div>
+                    </div>
+                    <div class="progress" style="height:6px; background:rgba(255,255,255,0.07);">
+                        <div class="progress-bar" style="width:{{ analysis.audio_analysis.audio_markers.silence_pattern_score }}%; background:linear-gradient(90deg,#d8b15a,#ff7d7d);"></div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+        {% endif %}
+
+        {% if analysis.audio_analysis.note %}
+        <div class="panel-soft p-3 mt-3" style="border-left: 3px solid rgba(216,177,90,0.4);">
+            <i class="fas fa-circle-info me-2" style="color:var(--accent);"></i>
+            <span class="muted">{{ analysis.audio_analysis.note }}</span>
+        </div>
+        {% endif %}
+    </div>
+    {% else %}
+    <!-- Audio analysis not available -->
+    <div class="panel-soft p-4 mb-4" style="border:1px solid rgba(255,255,255,0.07); opacity:0.7;">
+        <div style="display:flex; align-items:center; gap:14px;">
+            <i class="fas fa-waveform-lines" style="font-size:1.6rem; color:var(--muted);"></i>
+            <div>
+                <strong>Audio &amp; Lip-Sync Analysis</strong>
+                <div class="muted" style="font-size:0.85rem; margin-top:4px;">
+                    Install <code>librosa</code>, <code>mediapipe</code> and <code>ffmpeg</code> to enable real audio deepfake detection and lip-sync correlation.
+                    <br><code>pip install librosa mediapipe</code> &nbsp;+&nbsp; install ffmpeg on your system.
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
     {% if analysis.heatmap_images %}
+
     <!-- ── ARTIFACT HEATMAP GALLERY ──────────────────────────────────────────── -->
     <div class="panel p-4 p-lg-5 mb-4">
         <div class="section-title mb-4">
