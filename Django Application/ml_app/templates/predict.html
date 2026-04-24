@@ -5,6 +5,36 @@
 
 {% block content %}
 <section class="app-shell py-4 py-lg-5">
+
+    <!-- ── THREAT LEVEL BADGE ─────────────────────────────────────────────── -->
+    <div class="mb-4" style="text-align: center;">
+        <div style="
+            display: inline-flex; flex-direction: column; align-items: center; gap: 8px;
+            padding: 22px 48px; border-radius: 20px;
+            {% if threat.pulse %}animation: pulse-badge 1.4s ease-in-out infinite;{% endif %}
+            {% if threat.tone == 'critical' %}background: rgba(255,50,50,0.12); border: 2px solid rgba(255,60,60,0.45);
+            {% elif threat.tone == 'high' %}background: rgba(255,130,40,0.10); border: 2px solid rgba(255,130,40,0.35);
+            {% elif threat.tone == 'elevated' %}background: rgba(255,170,0,0.10); border: 2px solid rgba(255,170,0,0.35);
+            {% else %}background: rgba(74,222,128,0.08); border: 2px solid rgba(74,222,128,0.3);{% endif %}
+        ">
+            <div style="font-size: 0.76rem; letter-spacing: 0.14em; text-transform: uppercase; font-weight: 700;
+                {% if threat.tone == 'critical' %}color:#ff4444;{% elif threat.tone == 'high' %}color:#ff8c42;
+                {% elif threat.tone == 'elevated' %}color:#ffaa00;{% else %}color:#4ade80;{% endif %}">
+                DRISHTI VERDICT
+            </div>
+            <div style="font-size: clamp(1.6rem,3.5vw,2.8rem); font-weight: 900; letter-spacing: -0.5px;
+                {% if threat.tone == 'critical' %}color:#ff4444;{% elif threat.tone == 'high' %}color:#ff8c42;
+                {% elif threat.tone == 'elevated' %}color:#ffaa00;{% else %}color:#4ade80;{% endif %}">
+                {{ threat.level }}
+            </div>
+            <div style="font-size: 1rem; font-weight: 600; opacity: 0.85;
+                {% if threat.tone == 'critical' %}color:#ff7777;{% elif threat.tone == 'high' %}color:#ffb080;
+                {% elif threat.tone == 'elevated' %}color:#ffd060;{% else %}color:#86efac;{% endif %}">
+                {{ threat.sub }}
+            </div>
+        </div>
+    </div>
+
     <div class="panel p-4 p-lg-5 mb-4">
         <div class="row g-4 align-items-center">
             <div class="col-lg-8">
@@ -52,21 +82,41 @@
         </div>
         <div class="col-md-6 col-xl-3">
             <div class="metric-card h-100">
-                <div class="muted mb-2">Primary match</div>
-                <div class="metric-value" style="font-size: 1.6rem;">
-                    {% if last_result.impersonation_matches %}
+                <div class="muted mb-2">Identity match</div>
+                {% if last_result.impersonation_matches %}
+                <div class="metric-value tone-critical" style="font-size: 1.4rem;">
                     {{ last_result.impersonation_matches.0.subject }}
-                    {% else %}
-                    None
-                    {% endif %}
                 </div>
-                <div class="muted mt-2">
-                    {% if last_result.impersonation_matches %}
-                    {{ last_result.impersonation_matches.0.score }}% match risk
-                    {% else %}
-                    Watchlist clean
-                    {% endif %}
+                <div class="mt-2">
+                    <span class="status-pill {{ last_result.impersonation_matches.0.tone }}">
+                        {{ last_result.impersonation_matches.0.score }}% risk
+                    </span>
                 </div>
+                {% else %}
+                <div class="metric-value tone-low" style="font-size: 1.4rem;">Clear</div>
+                <div class="mt-2">
+                    <span class="status-pill low"><i class="fas fa-shield-halved me-1"></i>No watchlist match</span>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+
+    <!-- Detection Latency Counter -->
+    <div class="panel-soft p-4 mb-4" style="border: 1px solid rgba(216,177,90,0.2);">
+        <div class="row g-3 align-items-center text-center">
+            <div class="col-md-4">
+                <div class="muted mb-1" style="font-size:0.78rem;text-transform:uppercase;letter-spacing:.08em;">DRISHTI Detection Time</div>
+                <div style="font-size:2.2rem;font-weight:900;color:#d8b15a;font-family:monospace;">{{ detection_time }}s</div>
+            </div>
+            <div class="col-md-4">
+                <div class="muted mb-1" style="font-size:0.78rem;text-transform:uppercase;letter-spacing:.08em;">Manual PIB Baseline</div>
+                <div style="font-size:2.2rem;font-weight:900;color:#888;font-family:monospace;">{{ manual_baseline_min }}m</div>
+            </div>
+            <div class="col-md-4">
+                <div class="muted mb-1" style="font-size:0.78rem;text-transform:uppercase;letter-spacing:.08em;">Speedup Factor</div>
+                <div style="font-size:2.2rem;font-weight:900;color:#4ade80;font-family:monospace;">{{ speedup }}x faster</div>
             </div>
         </div>
     </div>
@@ -292,20 +342,147 @@
         </div>
     </div>
 
+    <!-- ── OSINT THREAT CONTEXT ────────────────────────────────────────────── -->
+    <div class="panel-soft p-4 mb-4" style="border: 1px solid rgba({% if osint_context.tone == 'critical' %}255,60,60{% elif osint_context.tone == 'high' %}255,130,40{% else %}216,177,90{% endif %},0.3);">
+        <div style="display:flex; justify-content:space-between; align-items:start; gap:16px; flex-wrap:wrap; margin-bottom:12px;">
+            <div>
+                <div class="eyebrow mb-1"><i class="fas fa-globe me-2"></i>Threat Context</div>
+                <h3 style="margin-bottom:0;">{{ osint_context.title }}</h3>
+            </div>
+            <span class="status-pill {{ osint_context.tone }}">{{ osint_context.badge }}</span>
+        </div>
+        <p class="muted mb-0">{{ osint_context.narrative }}</p>
+    </div>
+
+    {% if analysis.heatmap_images %}
+    <!-- ── ARTIFACT HEATMAP GALLERY ──────────────────────────────────────────── -->
+    <div class="panel p-4 p-lg-5 mb-4">
+        <div class="section-title mb-4">
+            <div>
+                <h2>Artifact Heatmap</h2>
+                <p class="muted mb-0">Laplacian edge-map highlighting synthetic artifact density regions (JET colormap).</p>
+            </div>
+            <span class="status-pill elevated"><i class="fas fa-fire-flame-curved"></i> CV2 JET</span>
+        </div>
+        <div class="row g-3">
+            {% for heatmap in analysis.heatmap_images %}
+            <div class="col-6 col-md-4 col-xl-2">
+                <img src="{% static heatmap %}" alt="Heatmap {{ forloop.counter }}" loading="lazy"
+                    style="width:100%; border-radius:10px; border:1px solid rgba(255,100,50,0.3);">
+                <div class="muted mt-1" style="font-size:0.76rem; text-align:center;">Frame {{ forloop.counter }}</div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- ── FORENSIC COMPARISON SLIDER ─────────────────────────────────────────── -->
+    {% if analysis.preprocessed_images %}
+    <div class="panel p-4 p-lg-5 mb-4">
+        <div class="section-title mb-4">
+            <div>
+                <h2>Forensic Comparison</h2>
+                <p class="muted mb-0">Drag the divider to compare original frame vs. Laplacian artifact map.</p>
+            </div>
+        </div>
+        <div style="position:relative; width:100%; max-width:700px; margin:0 auto; user-select:none; border-radius:14px; overflow:hidden; border:1px solid rgba(255,255,255,0.1);">
+            <img id="cmp-right" src="{% static analysis.heatmap_images.0 %}" alt="Artifact Map"
+                style="display:block; width:100%; height:auto;">
+            <div id="cmp-left-wrap" style="position:absolute; top:0; left:0; width:50%; height:100%; overflow:hidden; border-right:2px solid #d8b15a;">
+                <img src="{% static analysis.preprocessed_images.0 %}" alt="Original Frame"
+                    style="display:block; width:700px; max-width:none; height:auto;">
+            </div>
+            <div id="cmp-handle" style="position:absolute; top:0; left:50%; width:30px; height:100%; transform:translateX(-50%); cursor:ew-resize; display:flex; align-items:center; justify-content:center; z-index:10;">
+                <div style="width:30px; height:30px; background:#d8b15a; border-radius:50%; display:flex; align-items:center; justify-content:center; box-shadow:0 2px 8px rgba(0,0,0,0.5);">
+                    <i class="fas fa-arrows-left-right" style="color:#000; font-size:0.7rem;"></i>
+                </div>
+            </div>
+            <div style="position:absolute; bottom:10px; left:10px; font-size:0.72rem; background:rgba(0,0,0,0.7); padding:4px 10px; border-radius:6px; color:#fff;">Original Frame</div>
+            <div style="position:absolute; bottom:10px; right:10px; font-size:0.72rem; background:rgba(0,0,0,0.7); padding:4px 10px; border-radius:6px; color:#fff;">Artifact Map</div>
+        </div>
+    </div>
+    {% endif %}
+    {% endif %}
+
+    <!-- ── OPERATOR ACTIONS + PIB BUTTON ─────────────────────────────────── -->
     <div class="panel p-4 p-lg-5">
         <div class="row g-3 align-items-center">
-            <div class="col-lg-7">
+            <div class="col-lg-6">
                 <h2 style="margin-bottom: 10px;">One-click operator outputs</h2>
-                <p class="muted mb-0">Turn this assessment into a shareable report or feed another suspicious clip into the queue.</p>
+                <p class="muted mb-0">Turn this assessment into a report, issue a PIB notice, or analyze another clip.</p>
             </div>
-            <div class="col-lg-5">
-                <div style="display: flex; flex-wrap: wrap; justify-content: flex-lg-end; gap: 12px;">
-                    <a class="btn btn-drishti" href="{% url 'ml_app:report_page' %}"><i class="fas fa-file-lines me-2"></i>Open report</a>
-                    <a class="btn btn-ghost" href="{% url 'ml_app:feedback_page' %}"><i class="fas fa-comment-dots me-2"></i>Analyst feedback</a>
-                    <a class="btn btn-ghost" href="{% url 'ml_app:home' %}"><i class="fas fa-rotate me-2"></i>Analyze another</a>
+            <div class="col-lg-6">
+                <div style="display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end;">
+                    <a class="btn btn-drishti" href="{% url 'ml_app:report_page' %}"><i class="fas fa-file-lines me-2"></i>Report</a>
+                    <a class="btn btn-ghost" href="{% url 'ml_app:download_pdf_report' %}"><i class="fas fa-file-pdf me-2"></i>PDF</a>
+                    <button class="btn btn-ghost" onclick="document.getElementById('pib-modal').style.display='flex'" style="border-color:rgba(255,170,0,0.4);"><i class="fas fa-stamp me-2"></i>PIB Notice</button>
+                    <a class="btn btn-ghost" href="{% url 'ml_app:feedback_page' %}"><i class="fas fa-comment-dots me-2"></i>Feedback</a>
+                    <a class="btn btn-ghost" href="{% url 'ml_app:home' %}"><i class="fas fa-rotate me-2"></i>New analysis</a>
                 </div>
             </div>
         </div>
     </div>
+
+    <!-- ── PIB FACT CHECK MODAL ────────────────────────────────────────────── -->
+    <div id="pib-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:9999; align-items:center; justify-content:center; padding:20px;">
+        <div style="background:#0f0f1a; border:1px solid rgba(216,177,90,0.35); border-radius:20px; max-width:600px; width:100%; padding:36px; position:relative; max-height:90vh; overflow-y:auto;">
+            <button onclick="document.getElementById('pib-modal').style.display='none'" style="position:absolute; top:16px; right:16px; background:transparent; border:none; color:var(--muted); font-size:1.3rem; cursor:pointer;"><i class="fas fa-xmark"></i></button>
+            <div class="eyebrow mb-2"><i class="fas fa-stamp me-2"></i>PIB Fact Check Notice</div>
+            <h3 style="margin-bottom:20px;">Issue Official Notice</h3>
+            <form method="POST" action="{% url 'ml_app:fact_check' %}">
+                {% csrf_token %}
+                <input type="hidden" name="video_name" value="{{ last_result.video }}">
+                <input type="hidden" name="verdict" value="{{ last_result.verdict }}">
+                <input type="hidden" name="confidence" value="{{ last_result.confidence }}">
+                <input type="hidden" name="threat_level" value="{{ last_result.threat_level }}">
+                <div class="mb-3">
+                    <label class="muted mb-2 d-block" style="font-size:0.82rem; text-transform:uppercase; letter-spacing:.06em; font-weight:600;">Analyst Note</label>
+                    <textarea name="analyst_note" rows="4" required placeholder="Describe your assessment for the PIB record..."
+                        style="width:100%; background:rgba(0,0,0,0.3); border:1px solid rgba(255,255,255,0.1); border-radius:12px; color:var(--text); padding:14px; font-family:'IBM Plex Sans',sans-serif; font-size:0.9rem; resize:vertical; outline:none;"
+                        onfocus="this.style.borderColor='rgba(216,177,90,0.4)'" onblur="this.style.borderColor='rgba(255,255,255,0.1)'"></textarea>
+                </div>
+                <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                    <button type="submit" class="btn btn-drishti"><i class="fas fa-paper-plane me-2"></i>Issue & Log Notice</button>
+                    <button type="button" onclick="document.getElementById('pib-modal').style.display='none'" class="btn btn-ghost">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
 </section>
+
+<style>
+@keyframes pulse-badge {
+    0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(255,50,50,0.4); }
+    50% { opacity: 0.88; box-shadow: 0 0 0 12px rgba(255,50,50,0); }
+}
+.cmp-img { display: block; }
+</style>
+
+<script>
+(function() {
+    var handle = document.getElementById('cmp-handle');
+    var wrap   = document.getElementById('cmp-left-wrap');
+    if (!handle || !wrap) return;
+    var container = handle.parentElement;
+    var dragging = false;
+    handle.addEventListener('mousedown', function(e) { dragging = true; e.preventDefault(); });
+    document.addEventListener('mouseup',  function()  { dragging = false; });
+    document.addEventListener('mousemove', function(e) {
+        if (!dragging) return;
+        var rect = container.getBoundingClientRect();
+        var pct  = Math.min(100, Math.max(0, ((e.clientX - rect.left) / rect.width) * 100));
+        wrap.style.width = pct + '%';
+        handle.style.left = pct + '%';
+    });
+    handle.addEventListener('touchstart', function(e) { dragging = true; }, {passive:true});
+    document.addEventListener('touchend',  function()  { dragging = false; });
+    document.addEventListener('touchmove', function(e) {
+        if (!dragging) return;
+        var rect = container.getBoundingClientRect();
+        var pct  = Math.min(100, Math.max(0, ((e.touches[0].clientX - rect.left) / rect.width) * 100));
+        wrap.style.width = pct + '%';
+        handle.style.left = pct + '%';
+    }, {passive:true});
+})();
+</script>
 {% endblock %}

@@ -1,9 +1,12 @@
 import glob
+import io
 import json
 import os
 import shutil
 import statistics
+import subprocess
 import time
+import urllib.request
 from datetime import datetime
 
 from django.conf import settings
@@ -120,6 +123,56 @@ EVENT_WATCHLIST = [
     },
 ]
 
+# ─── OSINT Context narratives ─────────────────────────────────────────────────
+OSINT_CONTEXTS = {
+    "sindoor": {
+        "title": "Operation Sindoor Narrative Window",
+        "narrative": ("Synthetic clips exploiting Operation Sindoor visuals are a known high-yield format. "
+                       "Adversarial actors fabricate surrender or casualty footage to manipulate public sentiment "
+                       "before official briefings."),
+        "badge": "Threat Active",
+        "tone": "critical",
+    },
+    "ispr_pakistan": {
+        "title": "Cross-Border Disinformation Pattern",
+        "narrative": ("ISPR-linked synthetic media campaigns typically target Indian diplomatic and military figures "
+                       "to generate confusion ahead of bilateral engagements. This clip matches known ISPR "
+                       "narrative playbook signatures."),
+        "badge": "Threat Active",
+        "tone": "high",
+    },
+    "default": {
+        "title": "Military Disinformation Context",
+        "narrative": ("Generic military disinformation clips circulate during crisis windows to seed confusion about "
+                       "command structure, casualties, or operational outcomes. DRISHTI flags this clip for analyst review."),
+        "badge": "Monitoring",
+        "tone": "elevated",
+    },
+}
+
+
+def _get_threat_level(confidence, is_likely_fake):
+    """Return 4-tier threat badge data."""
+    c = float(confidence)
+    if not is_likely_fake or c < 35.0:
+        return {"level": "AUTHENTIC", "sub": "LOW THREAT", "tone": "low", "pulse": False, "label": "AUTHENTIC — LOW THREAT"}
+    elif c < 55.0:
+        return {"level": "UNCERTAIN", "sub": "MEDIUM THREAT", "tone": "elevated", "pulse": False, "label": "UNCERTAIN — MEDIUM THREAT"}
+    elif c < 75.0:
+        return {"level": "SYNTHETIC", "sub": "HIGH THREAT", "tone": "high", "pulse": False, "label": "SYNTHETIC — HIGH THREAT"}
+    else:
+        return {"level": "SYNTHETIC", "sub": "CRITICAL THREAT", "tone": "critical", "pulse": True, "label": "SYNTHETIC — CRITICAL THREAT"}
+
+
+def _get_osint_context(video_name):
+    """Return threat context card based on filename keywords."""
+    name = (video_name or "").lower()
+    if "sindoor" in name:
+        return OSINT_CONTEXTS["sindoor"]
+    if any(k in name for k in ["ispr", "pakistan", "pak"]):
+        return OSINT_CONTEXTS["ispr_pakistan"]
+    return OSINT_CONTEXTS["default"]
+
 
 if Dataset is not None:
     class validation_dataset(Dataset):
@@ -179,14 +232,19 @@ def predict(model, img):
 
 
 def get_accurate_model(sequence_length):
+    """Return the best matching .pt model path, or None if none are available."""
     models_dir = os.path.join(settings.BASE_DIR, "ml_app", "ml_models")
 
     if not os.path.isdir(models_dir):
-        raise ValueError(f"Models folder missing at: {models_dir}")
+        print(f"[DRISHTI] ml_models folder not found at {models_dir} — running in demo mode.")
+        return None
 
     model_files = glob.glob(os.path.join(models_dir, "*.pt"))
-    match = []
+    if not model_files:
+        print("[DRISHTI] No .pt model files found — running in demo mode.")
+        return None
 
+    match = []
     for model_path in model_files:
         parts = os.path.basename(model_path).replace(".pt", "").split("_")
         try:
@@ -198,7 +256,8 @@ def get_accurate_model(sequence_length):
             continue
 
     if not match:
-        raise ValueError(f"No matching model found for sequence length {sequence_length}")
+        print(f"[DRISHTI] No model matched sequence length {sequence_length} — running in demo mode.")
+        return None
 
     match.sort(reverse=True)
     return match[0][1]
@@ -324,60 +383,105 @@ def _build_home_context(form, stats=None):
     }
 
 
-def _build_impersonation_matches(video_name, base_score, is_likely_fake):
+def _build_impersonation_matches(video_name, base_score, is_likely_fake, confidence):
+    """
+    Only flag impersonation when the video is actually detected as synthetic
+    AND confidence is meaningfully high. Authentic videos get near-zero scores.
+    """
     name = (video_name or "").lower()
-    base = float(base_score)
-    library = [
-        {
-            "subject": "S. Jaishankar",
+
+    # Authentic videos: return empty — no impersonation detected
+    if not is_likely_fake:
+        return []
+
+    # Confidence below 65%: inconclusive, return empty
+    if confidence < 65.0:
+        return []
+
+    # Keyword presence in filename signals relevance
+    keyword_map = {
+        "S. Jaishankar": {
             "role": "External Affairs diplomatic voiceprint",
-            "boost": 14 if "jaishankar" in name or "eam" in name else 6,
+            "keywords": ["jaishankar", "eam", "foreign", "ministry"],
+            "direct_match": any(k in name for k in ["jaishankar", "eam"]),
         },
-        {
-            "subject": "Narendra Modi",
+        "Narendra Modi": {
             "role": "Prime Minister face-voice embedding",
-            "boost": 12 if "modi" in name or "pm" in name else 5,
+            "keywords": ["modi", "pm", "prime", "minister"],
+            "direct_match": any(k in name for k in ["modi", "pm"]),
         },
-        {
-            "subject": "Indian Army leadership",
+        "Indian Army leadership": {
             "role": "Army command persona cluster",
-            "boost": 12 if "army" in name or "general" in name or "chief" in name else 7,
+            "keywords": ["army", "general", "chief", "military", "defence"],
+            "direct_match": any(k in name for k in ["army", "general", "chief"]),
         },
-        {
-            "subject": "ISPR spokesperson",
+        "ISPR spokesperson": {
             "role": "Pakistan military media identity set",
-            "boost": 15 if "ispr" in name or "pakistan" in name else 8,
+            "keywords": ["ispr", "pakistan", "pak"],
+            "direct_match": any(k in name for k in ["ispr", "pakistan", "pak"]),
         },
-    ]
+    }
+
+    # Scale score from actual confidence, not from base_score
+    conf_factor = (confidence - 65.0) / 35.0  # 0.0 at 65%, 1.0 at 100%
 
     matches = []
-    for entry in library:
-        score = _clamp(base + entry["boost"] + (8 if is_likely_fake else -10))
+    for subject, data in keyword_map.items():
+        keyword_hit = any(k in name for k in data["keywords"])
+        if data["direct_match"]:
+            score = _clamp(55.0 + conf_factor * 30.0)
+        elif keyword_hit:
+            score = _clamp(35.0 + conf_factor * 20.0)
+        else:
+            # No filename evidence: skip this entity entirely
+            continue
+
         band = _risk_band(score)
-        matches.append(
-            {
-                "subject": entry["subject"],
-                "role": entry["role"],
-                "score": score,
-                "label": band["label"],
-                "tone": band["tone"],
-            }
-        )
+        matches.append({
+            "subject": subject,
+            "role": data["role"],
+            "score": score,
+            "label": band["label"],
+            "tone": band["tone"],
+        })
 
     matches.sort(key=lambda item: item["score"], reverse=True)
     return matches[:3]
 
 
 def _build_weaponization(confidence, is_likely_fake, video_name):
+    """
+    Weaponization score is ONLY elevated when:
+    - The video is genuinely detected as synthetic
+    - AND there are relevant keywords in the filename
+    - AND confidence is high
+    Authentic videos return near-zero scores.
+    """
     lowered = (video_name or "").lower()
     narrative_keywords = ["sindoor", "army", "strike", "general", "war", "breaking", "exclusive", "ispr", "jaishankar"]
     keyword_hits = sum(1 for keyword in narrative_keywords if keyword in lowered)
 
-    reach_score = _clamp(48 + keyword_hits * 7 + (confidence - 50) * 0.35)
-    emotion_score = _clamp(42 + keyword_hits * 5 + (14 if is_likely_fake else 4) + (confidence - 50) * 0.25)
-    timing_score = _clamp(58 + keyword_hits * 4 + (8 if is_likely_fake else 0))
+    if not is_likely_fake:
+        # Authentic video: minimal weaponization risk regardless of filename
+        reach_score = _clamp(keyword_hits * 3.0)          # max 27% if every keyword matches
+        emotion_score = _clamp(keyword_hits * 2.5)         # max ~22%
+        timing_score = _clamp(5.0 + keyword_hits * 2.0)   # max ~23%
+    else:
+        # Synthetic video: scale with confidence and keyword relevance
+        conf_lift = max(0.0, confidence - 60.0)            # 0 at 60%, 35 at 95%
+        reach_score = _clamp(15.0 + keyword_hits * 9.0 + conf_lift * 0.9)
+        emotion_score = _clamp(12.0 + keyword_hits * 7.0 + conf_lift * 0.75)
+        timing_score = _clamp(10.0 + keyword_hits * 6.0 + conf_lift * 0.6)
+
     total = _clamp(reach_score * 0.4 + emotion_score * 0.35 + timing_score * 0.25)
     band = _risk_band(total)
+
+    if total >= 70:
+        assessment = "High likelihood of rapid pickup across TV clips, X/Twitter handles, and Telegram forwarding chains."
+    elif total >= 40:
+        assessment = "Moderate amplification potential — monitor for narrative reuse in conflict-adjacent contexts."
+    else:
+        assessment = "Low weaponisation risk. No significant synthetic or conflict-narrative signals detected in this clip."
 
     return {
         "score": total,
@@ -386,11 +490,7 @@ def _build_weaponization(confidence, is_likely_fake, video_name):
         "reach_score": reach_score,
         "emotion_score": emotion_score,
         "timing_score": timing_score,
-        "assessment": (
-            "High likelihood of rapid pickup across TV clips, X/Twitter handles, and Telegram forwarding chains."
-            if total >= 70
-            else "Requires monitoring, but amplification pressure is still manageable without a surge event."
-        ),
+        "assessment": assessment,
     }
 
 
@@ -506,6 +606,7 @@ def generate_demo_frames(video_path, num_frames=6):
 
     preprocessed_images = []
     faces_cropped_images = []
+    heatmap_images = []
     is_likely_fake = False
     confidence = 50.0
     total_frames = 0
@@ -569,6 +670,20 @@ def generate_demo_frames(video_path, num_frames=6):
                 preprocess_path = os.path.join(demo_dir, preprocess_filename)
                 cv2.imwrite(preprocess_path, frame_display, [cv2.IMWRITE_JPEG_QUALITY, 95])
                 preprocessed_images.append(f"images/demo/{preprocess_filename}")
+
+                # Generate Laplacian heatmap for artifact visualisation
+                try:
+                    gray_disp = cv2.cvtColor(frame_display, cv2.COLOR_BGR2GRAY)
+                    lap = cv2.Laplacian(gray_disp, cv2.CV_64F)
+                    lap_abs = cv2.convertScaleAbs(lap)
+                    lap_norm = cv2.normalize(lap_abs, None, 0, 255, cv2.NORM_MINMAX)
+                    heatmap_bgr = cv2.applyColorMap(lap_norm, cv2.COLORMAP_JET)
+                    heatmap_filename = f"demo_heatmap_{frame_count:02d}.jpg"
+                    heatmap_path = os.path.join(demo_dir, heatmap_filename)
+                    cv2.imwrite(heatmap_path, heatmap_bgr, [cv2.IMWRITE_JPEG_QUALITY, 92])
+                    heatmap_images.append(f"images/demo/{heatmap_filename}")
+                except Exception:
+                    pass
 
                 display_height, display_width = frame_display.shape[:2]
                 crop_size = min(180, display_height, display_width)
@@ -668,66 +783,88 @@ def generate_demo_frames(video_path, num_frames=6):
             print(f"Error generating demo frames: {exc}")
 
     confidence = _clamp(confidence, 50.0, 95.0)
-    threat_bias = confidence - 50
 
-    face_swap_score = _clamp(38 + threat_bias * 0.85 + fake_score * 3 - real_score * 1.2)
-    lip_sync_score = _clamp(32 + threat_bias * 0.65 + (8 if std_frame_diff < 2.4 else -4) + fake_score * 2)
-    metadata_score = _clamp(
-        24
-        + threat_bias * 0.35
-        + (8 if extension in {".avi", ".wmv", ".mkv"} else 3)
-        + (6 if duration_seconds and duration_seconds < 8 else 0)
-    )
-    av_sync_score = _clamp(34 + threat_bias * 0.7 + (10 if avg_frame_diff < 3 else 0) + fake_score * 2.2)
-    osint_score = _clamp(28 + threat_bias * 0.55 + (12 if is_likely_fake else 0) + (6 if "sindoor" in video_name.lower() else 0))
+    # --- Proportional signal scoring ---
+    # For AUTHENTIC videos: scores stay LOW (5-25%) unless specific frame metrics say otherwise.
+    # For SYNTHETIC videos: scores scale with confidence and frame anomaly strength.
 
-    if not is_likely_fake:
-        face_swap_score = _clamp(face_swap_score - 18)
-        lip_sync_score = _clamp(lip_sync_score - 14)
-        metadata_score = _clamp(metadata_score - 8)
-        av_sync_score = _clamp(av_sync_score - 12)
-        osint_score = _clamp(osint_score - 10)
+    if is_likely_fake:
+        # Scale from actual fake_score and confidence
+        conf_lift = max(0.0, confidence - 55.0)  # 0 at 55%, up to 40 at 95%
+        face_swap_score = _clamp(10.0 + fake_score * 5.5 + conf_lift * 1.1)
+        lip_sync_score = _clamp(8.0 + fake_score * 4.0 + (12.0 if std_frame_diff < 2.0 else 4.0) + conf_lift * 0.8)
+        metadata_score = _clamp(
+            6.0
+            + fake_score * 3.0
+            + (10.0 if extension in {".avi", ".wmv", ".mkv"} else 3.0)
+            + (8.0 if duration_seconds and duration_seconds < 8 else 0.0)
+            + conf_lift * 0.5
+        )
+        av_sync_score = _clamp(10.0 + fake_score * 4.5 + (12.0 if avg_frame_diff < 2.5 else 3.0) + conf_lift * 0.9)
+        lowered_name = video_name.lower()
+        osint_keywords = ["sindoor", "army", "strike", "general", "war", "ispr", "jaishankar", "modi"]
+        osint_hits = sum(1 for k in osint_keywords if k in lowered_name)
+        osint_score = _clamp(8.0 + osint_hits * 10.0 + fake_score * 3.0 + conf_lift * 0.7)
+    else:
+        # Authentic video: scores reflect actual frame quality, NOT inflated
+        # A clean video with high Laplacian sharpness gets very low scores
+        sharpness_penalty = max(0.0, (200.0 - avg_laplacian) / 200.0) * 8.0  # 0 for sharp, up to 8 for blurry
+        motion_penalty = max(0.0, (5.0 - avg_frame_diff) / 5.0) * 6.0  # penalty for too-static video
+
+        face_swap_score = _clamp(3.0 + sharpness_penalty + real_score * 0.5)
+        lip_sync_score = _clamp(3.0 + motion_penalty + (5.0 if std_frame_diff < 1.0 else 0.0))
+        metadata_score = _clamp(
+            2.0
+            + (5.0 if extension in {".avi", ".wmv", ".mkv"} else 1.0)
+            + (3.0 if duration_seconds and duration_seconds < 5 else 0.0)
+        )
+        av_sync_score = _clamp(3.0 + motion_penalty)
+        lowered_name = video_name.lower()
+        osint_keywords = ["sindoor", "army", "strike", "general", "war", "ispr", "jaishankar", "modi"]
+        osint_hits = sum(1 for k in osint_keywords if k in lowered_name)
+        osint_score = _clamp(2.0 + osint_hits * 4.0)  # max ~34% even with all keywords, but video is authentic
 
     signals = [
         _make_signal(
             "Face-swap detector",
             face_swap_score,
             "Looks for edge smoothing, spatial inconsistencies, and identity-region artifacts.",
-            f"Laplacian mean {avg_laplacian:.1f}, variance spread {std_laplacian:.1f}.",
+            f"Laplacian sharpness mean {avg_laplacian:.1f}, variance {std_laplacian:.1f}. {'Anomalies detected.' if is_likely_fake else 'No significant artifacts found.'}",
         ),
         _make_signal(
             "Lip-sync anomaly",
             lip_sync_score,
             "Uses motion regularity as a proxy for speech-driven facial movement consistency.",
-            f"Frame-diff mean {avg_frame_diff:.1f}, volatility {std_frame_diff:.1f}.",
+            f"Frame-diff mean {avg_frame_diff:.1f}, volatility {std_frame_diff:.1f}. {'Irregular motion pattern.' if is_likely_fake else 'Motion pattern within natural range.'}",
         ),
         _make_signal(
             "Metadata forensics",
             metadata_score,
-            "Flags delivery patterns common in rapidly repackaged synthetic clips.",
-            f"Container {extension or 'unknown'}, sampled duration {duration_seconds:.1f}s.",
+            "Flags container types and durations common in repackaged synthetic clips.",
+            f"Container {extension or 'unknown'}, duration {duration_seconds:.1f}s. {'Suspicious packaging.' if is_likely_fake else 'Normal file metadata.'}",
         ),
         _make_signal(
             "Audio-visual sync proxy",
             av_sync_score,
-            "Approximates whether facial motion cadence aligns with natural speech dynamics.",
-            f"Motion score {avg_frame_diff:.1f} with {fps:.1f} fps capture rate.",
+            "Checks whether facial motion cadence aligns with natural speech dynamics.",
+            f"Motion score {avg_frame_diff:.1f} at {fps:.1f} fps. {'Sync mismatch detected.' if is_likely_fake else 'Sync within expected range.'}",
         ),
         _make_signal(
             "OSINT conflict alignment",
             osint_score,
-            "Estimates whether the clip can be inserted into a military or diplomatic misinformation cycle.",
-            "Matched against demo watchlists for conflict-era narrative patterns.",
+            "Checks whether the clip filename or content matches known conflict-era narrative patterns.",
+            f"{osint_hits} conflict keyword(s) detected in clip metadata. {'Elevated narrative risk.' if osint_score > 30 else 'No significant conflict-narrative match.'}",
         ),
     ]
 
-    impersonation_matches = _build_impersonation_matches(video_name, max(face_swap_score, osint_score), is_likely_fake)
+    impersonation_matches = _build_impersonation_matches(video_name, max(face_swap_score, osint_score), is_likely_fake, confidence)
     weaponization = _build_weaponization(confidence, is_likely_fake, video_name)
     top_match = impersonation_matches[0] if impersonation_matches else None
 
     return {
         "preprocessed_images": preprocessed_images,
         "faces_cropped_images": faces_cropped_images,
+        "heatmap_images": heatmap_images,
         "is_likely_fake": is_likely_fake,
         "confidence": confidence,
         "signals": signals,
@@ -756,14 +893,16 @@ def _build_result_payload(video_path, seq_len):
     video_filename = os.path.basename(video_path)
     analysis = generate_demo_frames(video_path, num_frames=6)
 
-    if torch is None:
+    model_path = get_accurate_model(seq_len) if torch is not None else None
+
+    if torch is None or model_path is None:
+        # No ML model available — use heuristic demo mode
         verdict = "SYNTHETIC" if analysis["is_likely_fake"] else "AUTHENTIC"
         confidence = analysis["confidence"]
         mode = "demo"
         model_name = "Heuristic multimodal fusion"
     else:
         dataset = validation_dataset([video_path], seq_len, train_transforms)
-        model_path = get_accurate_model(seq_len)
 
         model = DeepfakeModel(num_classes=2).to(device)
         model.load_state_dict(torch.load(model_path, map_location=device))
@@ -833,6 +972,7 @@ def index(request):
 
         saved_name = f"uploaded_{int(time.time())}.{video.name.split('.')[-1]}"
         save_path = os.path.join(settings.PROJECT_DIR, "uploaded_videos", saved_name)
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
 
         with open(save_path, "wb") as output_file:
             shutil.copyfileobj(video, output_file)
@@ -852,6 +992,7 @@ def predict_page(request):
     video_path = request.session["file_name"]
     seq_len = request.session["sequence_length"]
 
+    t_start = time.time()
     try:
         analysis, last_result = _build_result_payload(video_path, seq_len)
     except ValueError as exc:
@@ -860,6 +1001,16 @@ def predict_page(request):
     except RuntimeError as exc:
         messages.error(request, str(exc))
         return redirect("ml_app:home")
+    detection_time = round(time.time() - t_start, 2)
+
+    manual_baseline_min = 40
+    speedup = max(1, round((manual_baseline_min * 60) / max(detection_time, 0.1)))
+    threat = _get_threat_level(last_result["confidence"], last_result["verdict"] == "SYNTHETIC")
+    osint_ctx = _get_osint_context(os.path.basename(video_path))
+
+    # Store threat_level string in result for logging/PDF
+    last_result["threat_level"] = threat["label"]
+    last_result["detection_time"] = detection_time
 
     request.session["last_result"] = last_result
     log_path = os.path.join(settings.PROJECT_DIR, "logs", "detections.jsonl")
@@ -875,6 +1026,11 @@ def predict_page(request):
             "analysis": analysis,
             "last_result": last_result,
             "MEDIA_URL": settings.MEDIA_URL,
+            "detection_time": detection_time,
+            "manual_baseline_min": manual_baseline_min,
+            "speedup": speedup,
+            "threat": threat,
+            "osint_context": osint_ctx,
         },
     )
 
@@ -897,7 +1053,12 @@ def report_page(request):
         messages.warning(request, "No recent analysis. Please analyze a video first.")
         return redirect("ml_app:home")
 
-    return render(request, "report.html", {"last_result": last, "report_text": last.get("report_text", "")})
+    return render(request, "report.html", {
+        "last_result": last,
+        "report_text": last.get("report_text", ""),
+        "pib_notice": request.session.get("pib_notice"),
+        "pib_notice_meta": request.session.get("pib_notice_meta"),
+    })
 
 
 def feedback_page(request):
@@ -971,3 +1132,276 @@ def handler404(request, exception):
 
 def cuda_full(request):
     return render(request, "cuda_full.html")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DRISHTI v2 — New Feature Views
+# ─────────────────────────────────────────────────────────────────────────────
+
+def url_ingest(request):
+    """Download a video from a URL using yt-dlp and run it through the pipeline."""
+    if request.method != "POST":
+        return redirect("ml_app:home")
+
+    video_url = (request.POST.get("video_url") or "").strip()
+    seq_len = int(request.POST.get("sequence_length") or 60)
+
+    if not video_url:
+        messages.error(request, "Please provide a video URL.")
+        return redirect("ml_app:home")
+
+    saved_name = f"url_ingest_{int(time.time())}.mp4"
+    save_path = os.path.join(settings.PROJECT_DIR, "uploaded_videos", saved_name)
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+
+    try:
+        try:
+            cmd = [
+                "yt-dlp", "--no-playlist",
+                "-f", "mp4/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+                "-o", save_path,
+                "--merge-output-format", "mp4",
+                video_url,
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            if result.returncode != 0 or not os.path.exists(save_path):
+                raise RuntimeError(result.stderr or "yt-dlp download failed")
+        except (FileNotFoundError, RuntimeError):
+            urllib.request.urlretrieve(video_url, save_path)
+
+        if not os.path.exists(save_path):
+            raise RuntimeError("Video file was not created after download.")
+
+        request.session["file_name"] = save_path
+        request.session["sequence_length"] = seq_len
+        return redirect("ml_app:predict")
+
+    except Exception as exc:
+        messages.error(request, f"Failed to fetch video from URL: {exc}")
+        return redirect("ml_app:home")
+
+
+@require_POST
+def issue_fact_check(request):
+    """Log a structured PIB Fact Check notice and store the formatted text in session."""
+    video_name = (request.POST.get("video_name") or "Unknown").strip()
+    verdict = (request.POST.get("verdict") or "").strip()
+    confidence = (request.POST.get("confidence") or "N/A").strip()
+    analyst_note = (request.POST.get("analyst_note") or "No additional analyst note provided.").strip()
+    threat_level = (request.POST.get("threat_level") or "").strip()
+    timestamp = datetime.utcnow().isoformat() + "Z"
+
+    entry = {
+        "video": video_name,
+        "verdict": verdict,
+        "confidence": confidence,
+        "threat_level": threat_level,
+        "analyst_note": analyst_note,
+        "issued_by": "DRISHTI-PIB-Operator",
+        "timestamp": timestamp,
+    }
+    log_path = os.path.join(settings.PROJECT_DIR, "logs", "fact_checks.jsonl")
+    _append_jsonl(log_path, entry)
+
+    sep = "=" * 60
+    pib_notice = (
+        f"PIB FACT CHECK NOTICE\n{sep}\n"
+        f"GOVERNMENT OF INDIA | PRESS INFORMATION BUREAU\n"
+        f"Digital Media Verification Division \u2014 DRISHTI System\n{sep}\n\n"
+        f"Reference No : DRISHTI-{int(time.time())}\n"
+        f"Date / Time  : {timestamp}\n"
+        f"Clip File    : {video_name}\n"
+        f"Verdict      : {verdict}\n"
+        f"Confidence   : {confidence}%\n"
+        f"Threat Level : {threat_level}\n\n"
+        f"ANALYST ASSESSMENT\n{'-' * 40}\n{analyst_note}\n\n"
+        f"ADVISORY\n{'-' * 40}\n"
+        f"This content has been reviewed by the DRISHTI automated deepfake detection pipeline.\n"
+        f"Citizens are advised to verify all media from official government channels before sharing.\n\n"
+        f"{sep}\nThis notice is machine-generated. Subject to senior analyst review before public release.\n{sep}\n"
+    )
+    request.session["pib_notice"] = pib_notice
+    request.session["pib_notice_meta"] = entry
+    messages.success(request, "PIB Fact Check Notice issued and logged successfully.")
+    return redirect("ml_app:report_page")
+
+
+def _dashboard_authenticated(request):
+    return request.session.get("dashboard_authenticated") is True
+
+
+def dashboard_login(request):
+    if _dashboard_authenticated(request):
+        return redirect("ml_app:dashboard")
+
+    analyst_username = os.environ.get("ANALYST_USERNAME", "pib_analyst")
+    analyst_password = os.environ.get("ANALYST_PASSWORD", "drishti2025")
+    error = None
+
+    if request.method == "POST":
+        username = (request.POST.get("username") or "").strip()
+        password = (request.POST.get("password") or "").strip()
+        if username == analyst_username and password == analyst_password:
+            request.session["dashboard_authenticated"] = True
+            return redirect("ml_app:dashboard")
+        error = "Invalid credentials. Access denied."
+
+    return render(request, "dashboard_login.html", {"error": error})
+
+
+def dashboard_logout(request):
+    request.session.pop("dashboard_authenticated", None)
+    messages.info(request, "Logged out of analyst dashboard.")
+    return redirect("ml_app:dashboard_login")
+
+
+def dashboard(request):
+    if not _dashboard_authenticated(request):
+        return redirect("ml_app:dashboard_login")
+
+    detection_log = os.path.join(settings.PROJECT_DIR, "logs", "detections.jsonl")
+    fact_check_log = os.path.join(settings.PROJECT_DIR, "logs", "fact_checks.jsonl")
+    detections = _read_jsonl(detection_log, limit=50)
+    fact_checks = _read_jsonl(fact_check_log, limit=10)
+
+    def _sort_key(d):
+        tl = (d.get("threat_level") or "").upper()
+        v = (d.get("verdict") or "").upper()
+        if "CRITICAL" in tl:
+            return 0
+        if "HIGH" in tl or v == "SYNTHETIC":
+            return 1
+        if "MEDIUM" in tl or "UNCERTAIN" in tl:
+            return 2
+        return 3
+
+    detections.sort(key=_sort_key)
+    stats = _get_detection_stats()
+    impersonation_alerts = sum(1 for d in detections if d.get("impersonation_matches"))
+
+    return render(request, "dashboard.html", {
+        "detections": detections,
+        "fact_checks": fact_checks,
+        "stats": stats,
+        "impersonation_alerts": impersonation_alerts,
+        "fact_check_count": len(fact_checks),
+    })
+
+
+def download_pdf_report(request):
+    """Generate and stream a formatted PDF report using reportlab."""
+    last = request.session.get("last_result")
+    if not last:
+        messages.error(request, "No recent analysis found. Please analyze a video first.")
+        return redirect("ml_app:home")
+
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib import colors
+        from reportlab.lib.units import cm
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
+        from reportlab.lib.styles import ParagraphStyle
+
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=2 * cm, leftMargin=2 * cm,
+                                topMargin=2 * cm, bottomMargin=2 * cm)
+        story = []
+        gold = colors.HexColor("#d8b15a")
+        dark = colors.HexColor("#1a1a2e")
+        light_row = colors.HexColor("#f5f5f5")
+
+        def _ps(name, **kw):
+            return ParagraphStyle(name, **kw)
+
+        h1 = _ps("h1", fontSize=22, fontName="Helvetica-Bold", textColor=gold, spaceAfter=4)
+        h2 = _ps("h2", fontSize=13, fontName="Helvetica-Bold", spaceBefore=14, spaceAfter=8)
+        sub = _ps("sub", fontSize=9, fontName="Helvetica", textColor=colors.grey, spaceAfter=14)
+        body = _ps("body", fontSize=10, fontName="Helvetica", spaceAfter=6, leading=15)
+        footer_s = _ps("footer", fontSize=8, textColor=colors.grey, spaceBefore=10, alignment=1)
+
+        story += [
+            Paragraph("DRISHTI", h1),
+            Paragraph("Real-Time Military Deepfake &amp; Disinformation Detection Engine", sub),
+            HRFlowable(width="100%", thickness=1.5, color=gold),
+            Spacer(1, 0.3 * cm),
+            Paragraph("ANALYST DETECTION REPORT", h2),
+        ]
+
+        meta_data = [
+            ["Field", "Value"],
+            ["Video File", last.get("video", "N/A")],
+            ["Verdict", last.get("verdict", "N/A")],
+            ["Confidence", f"{last.get('confidence', 'N/A')}%"],
+            ["Threat Level", last.get("threat_level", "N/A")],
+            ["Detection Mode", (last.get("mode") or "demo").upper()],
+            ["Detection Time", f"{last.get('detection_time', 'N/A')}s"],
+            ["Timestamp", last.get("timestamp", "N/A")],
+        ]
+        meta_table = Table(meta_data, colWidths=[5 * cm, 12 * cm])
+        meta_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), dark), ("TEXTCOLOR", (0, 0), (-1, 0), gold),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTSIZE", (0, 0), (-1, -1), 10),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [light_row, colors.white]),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.grey), ("PADDING", (0, 0), (-1, -1), 8),
+            ("FONTNAME", (0, 1), (0, -1), "Helvetica-Bold"),
+        ]))
+        story += [meta_table, Spacer(1, 0.4 * cm)]
+
+        signals = last.get("signals", [])
+        if signals:
+            story.append(Paragraph("Signal Breakdown", h2))
+            sig_data = [["Signal", "Score", "Risk", "Evidence"]] + [
+                [s.get("name", ""), f"{s.get('score', 0)}%", s.get("label", ""), (s.get("evidence") or "")[:55]]
+                for s in signals
+            ]
+            sig_table = Table(sig_data, colWidths=[5 * cm, 2 * cm, 3 * cm, 7 * cm])
+            sig_table.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), dark), ("TEXTCOLOR", (0, 0), (-1, 0), gold),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTSIZE", (0, 0), (-1, -1), 9),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [light_row, colors.white]),
+                ("GRID", (0, 0), (-1, -1), 0.4, colors.grey), ("PADDING", (0, 0), (-1, -1), 6),
+            ]))
+            story += [sig_table, Spacer(1, 0.4 * cm)]
+
+        story += [
+            Paragraph("Alert Assessment", h2),
+            Paragraph(f"<b>{last.get('alert_title', '')}</b>", body),
+            Paragraph(last.get("alert_summary", ""), body),
+        ]
+
+        imp = last.get("impersonation_matches", [])
+        if imp:
+            story.append(Paragraph("Watchlist Matches", h2))
+            imp_data = [["Subject", "Role", "Score", "Risk"]] + [
+                [m.get("subject", ""), m.get("role", ""), f"{m.get('score', 0)}%", m.get("label", "")]
+                for m in imp
+            ]
+            imp_table = Table(imp_data, colWidths=[4 * cm, 6 * cm, 2.5 * cm, 4.5 * cm])
+            imp_table.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), dark), ("TEXTCOLOR", (0, 0), (-1, 0), gold),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTSIZE", (0, 0), (-1, -1), 9),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [light_row, colors.white]),
+                ("GRID", (0, 0), (-1, -1), 0.4, colors.grey), ("PADDING", (0, 0), (-1, -1), 6),
+            ]))
+            story.append(imp_table)
+
+        story += [
+            Spacer(1, 1 * cm),
+            HRFlowable(width="100%", thickness=0.5, color=colors.grey),
+            Paragraph(f"Generated by DRISHTI | {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC | For official use only.", footer_s),
+        ]
+
+        doc.build(story)
+        buffer.seek(0)
+        pdf_name = f"drishti_report_{last.get('video', 'clip').split('.')[0]}.pdf"
+        response = HttpResponse(buffer.read(), content_type="application/pdf")
+        response["Content-Disposition"] = f'attachment; filename="{pdf_name}"'
+        return response
+
+    except ImportError:
+        messages.error(request, "PDF export requires reportlab. Run: pip install reportlab")
+        return redirect("ml_app:report_page")
+    except Exception as exc:
+        messages.error(request, f"PDF generation failed: {exc}")
+        return redirect("ml_app:report_page")
+

@@ -81,14 +81,25 @@
                 <div class="section-title">
                     <div>
                         <h2>Analyst intake</h2>
-                        <p class="muted mb-0">Upload a suspicious clip and let DRISHTI produce a fused threat verdict.</p>
+                        <p class="muted mb-0">Upload a suspicious clip or paste a direct video URL.</p>
                     </div>
                     <span class="status-pill low"><i class="fas fa-stopwatch"></i> Demo-ready</span>
                 </div>
 
+                <!-- Tab switcher -->
+                <div style="display: flex; gap: 8px; margin-bottom: 24px; background: rgba(0,0,0,0.25); border-radius: 14px; padding: 5px;">
+                    <button id="tab-file" onclick="switchTab('file')" style="flex:1; padding: 10px; border-radius: 10px; border: none; background: rgba(216,177,90,0.18); color: var(--accent); font-weight: 600; cursor: pointer; font-size: 0.9rem;">
+                        <i class="fas fa-file-video me-2"></i>File Upload
+                    </button>
+                    <button id="tab-url" onclick="switchTab('url')" style="flex:1; padding: 10px; border-radius: 10px; border: none; background: transparent; color: var(--muted); font-weight: 600; cursor: pointer; font-size: 0.9rem;">
+                        <i class="fas fa-link me-2"></i>URL Ingest
+                    </button>
+                </div>
+
+                <!-- File upload form -->
+                <div id="panel-file">
                 <form class="form" method="POST" enctype="multipart/form-data" name="video-upload" id="video-upload">
                     {% csrf_token %}
-
                     <div class="panel-soft p-3 p-lg-4 mb-4">
                         <label class="form-label fw-semibold mb-3">Suspicious media file</label>
                         <div class="input-group input-group-lg">
@@ -97,14 +108,13 @@
                             </span>
                             <input type="file" class="form-control" id="{{ form.upload_video_file.id_for_label }}" name="{{ form.upload_video_file.name }}" accept="video/*" required>
                         </div>
-                        <div class="muted mt-2">Recommended demo names: include terms like `army`, `jaishankar`, `ispr`, or `sindoor` to simulate watchlist hits.</div>
+                        <div class="muted mt-2">Include terms like <code>army</code>, <code>ispr</code>, <code>sindoor</code> in filename to simulate watchlist hits.</div>
                         {% if form.upload_video_file.errors %}
                             {% for each_error in form.upload_video_file.errors %}
                             <div class="alert alert-danger mt-3 mb-0">{{ each_error }}</div>
                             {% endfor %}
                         {% endif %}
                     </div>
-
                     <div class="row g-4 mb-4">
                         <div class="col-lg-7">
                             <div class="panel-soft p-3 p-lg-4 h-100">
@@ -113,20 +123,15 @@
                                     <span class="status-pill elevated ms-2" id="slider-value">60 frames</span>
                                 </label>
                                 <div id="slider" class="w-100 mb-2"></div>
-                                <div class="muted">Higher frame counts produce better temporal evidence for lip-sync and motion consistency.</div>
+                                <div class="muted">Higher frame counts improve temporal evidence for lip-sync detection.</div>
                                 <input type="number" hidden id="{{ form.sequence_length.id_for_label }}" name="{{ form.sequence_length.name }}" value="60">
-                                {% if form.sequence_length.errors %}
-                                    {% for each_error in form.sequence_length.errors %}
-                                    <div class="alert alert-danger mt-3 mb-0">{{ each_error }}</div>
-                                    {% endfor %}
-                                {% endif %}
                             </div>
                         </div>
                         <div class="col-lg-5">
                             <div class="panel-soft p-3 p-lg-4 h-100">
                                 <div class="muted mb-2">Pipeline output</div>
                                 <ul class="mb-0 ps-3" style="color: var(--text);">
-                                    <li>Threat verdict</li>
+                                    <li>Threat badge verdict</li>
                                     <li>Watchlist match score</li>
                                     <li>Weaponisation estimate</li>
                                     <li>Fact-check recommendation</li>
@@ -134,7 +139,6 @@
                             </div>
                         </div>
                     </div>
-
                     <div class="mb-4">
                         <div class="ratio ratio-16x9 rounded-4 overflow-hidden" style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);">
                             <video width="100%" controls id="videos" style="object-fit: cover;">
@@ -143,11 +147,40 @@
                             </video>
                         </div>
                     </div>
-
                     <button id="videoUpload" type="submit" class="btn btn-drishti w-100">
                         <i class="fas fa-crosshairs me-2"></i>Run DRISHTI analysis
                     </button>
                 </form>
+                </div>
+
+                <!-- URL ingestion form -->
+                <div id="panel-url" style="display:none;">
+                <form method="POST" action="{% url 'ml_app:url_ingest' %}" id="url-ingest-form" onsubmit="showUrlSpinner()">
+                    {% csrf_token %}
+                    <div class="panel-soft p-3 p-lg-4 mb-4">
+                        <label class="form-label fw-semibold mb-3">Video URL</label>
+                        <div class="input-group input-group-lg">
+                            <span class="input-group-text" style="background: rgba(216,177,90,0.12); border: 1px solid rgba(216,177,90,0.18); color: #efcb87;">
+                                <i class="fas fa-link"></i>
+                            </span>
+                            <input type="url" class="form-control" name="video_url" id="video_url"
+                                placeholder="https://twitter.com/... or https://example.com/clip.mp4" required
+                                style="font-family: 'IBM Plex Mono', monospace; font-size: 0.88rem;">
+                        </div>
+                        <div class="muted mt-2">Supports Twitter/X, Telegram, YouTube, and direct .mp4 links via yt-dlp.</div>
+                    </div>
+                    <input type="hidden" name="sequence_length" value="60">
+                    <button type="submit" class="btn btn-drishti w-100">
+                        <i class="fas fa-satellite-dish me-2"></i>Fetch &amp; Analyse
+                    </button>
+                </form>
+                <!-- Loading spinner (shown on submit) -->
+                <div id="url-spinner" style="display:none; text-align:center; padding: 40px 20px;">
+                    <div style="display: inline-block; width: 48px; height: 48px; border: 4px solid rgba(216,177,90,0.2); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.9s linear infinite; margin-bottom: 18px;"></div>
+                    <div style="font-size: 1.1rem; font-weight: 600; color: var(--accent);">Fetching from source...</div>
+                    <div class="muted mt-2">yt-dlp is downloading the clip. This may take 10–60 seconds.</div>
+                </div>
+                </div>
             </div>
         </div>
 
@@ -214,5 +247,19 @@
         $("#{{ form.sequence_length.id_for_label }}").val(sliderSequenceNumbers[$("#slider").slider("value")]);
         $('#slider-value').html(sliderSequenceNumbers[$("#slider").slider("value")] + ' frames');
     });
+    function switchTab(tab) {
+        var f = tab === 'file';
+        document.getElementById('panel-file').style.display = f ? 'block' : 'none';
+        document.getElementById('panel-url').style.display  = f ? 'none'  : 'block';
+        document.getElementById('tab-file').style.background = f ? 'rgba(216,177,90,0.18)' : 'transparent';
+        document.getElementById('tab-file').style.color = f ? 'var(--accent)' : 'var(--muted)';
+        document.getElementById('tab-url').style.background  = f ? 'transparent' : 'rgba(216,177,90,0.18)';
+        document.getElementById('tab-url').style.color  = f ? 'var(--muted)' : 'var(--accent)';
+    }
+    function showUrlSpinner() {
+        document.getElementById('url-ingest-form').style.display = 'none';
+        document.getElementById('url-spinner').style.display = 'block';
+    }
 </script>
+<style>@keyframes spin { to { transform: rotate(360deg); } }</style>
 {% endblock %}
