@@ -103,6 +103,122 @@
     </div>
 
 
+
+    <!-- ══════════════════════════════════════════════════════════════════════
+         ACCURACY REPORT — PRIMARY VERDICT PANEL
+         ══════════════════════════════════════════════════════════════════════ -->
+    <div class="panel p-4 p-lg-5 mb-4" id="accuracy-report"
+         style="border: 2px solid rgba({% if analysis.false_statement_probability.tone == 'critical' %}255,60,60{% elif analysis.false_statement_probability.tone == 'high' %}255,120,40{% elif analysis.false_statement_probability.tone == 'elevated' %}216,177,90{% else %}74,222,128{% endif %},0.4);
+                background: rgba({% if analysis.false_statement_probability.tone == 'critical' %}255,60,60{% elif analysis.false_statement_probability.tone == 'high' %}255,120,40{% else %}0,0,0{% endif %},0.04);">
+
+        <div class="section-title mb-4">
+            <div>
+                <div class="eyebrow mb-2"><i class="fas fa-crosshairs me-2" style="color:#d8b15a;"></i>DRISHTI ACCURACY REPORT</div>
+                <h2 style="font-size:clamp(1.4rem,3vw,2rem); margin-bottom:6px;">False Statement Probability</h2>
+                <p class="muted mb-0">Fused score from visual analysis, audio AI markers, and lip-sync correlation.</p>
+            </div>
+            <div style="text-align:center;">
+                <div class="metric-value {{ analysis.false_statement_probability.tone == 'critical' and 'tone-critical' or analysis.false_statement_probability.tone == 'high' and 'tone-critical' or analysis.false_statement_probability.tone == 'elevated' and 'tone-elevated' or 'tone-low' }}"
+                     style="font-size:clamp(2.5rem,6vw,4rem); line-height:1; font-weight:900;">
+                    {% if analysis.false_statement_probability.tone == 'critical' or analysis.false_statement_probability.tone == 'high' %}
+                        <span style="color:#ff4444;">{{ analysis.false_statement_probability.score }}%</span>
+                    {% elif analysis.false_statement_probability.tone == 'elevated' %}
+                        <span style="color:#d8b15a;">{{ analysis.false_statement_probability.score }}%</span>
+                    {% else %}
+                        <span style="color:#4ade80;">{{ analysis.false_statement_probability.score }}%</span>
+                    {% endif %}
+                </div>
+                <div class="mt-2">
+                    <span class="status-pill {% if analysis.false_statement_probability.tone == 'critical' %}critical{% elif analysis.false_statement_probability.tone == 'high' %}high{% elif analysis.false_statement_probability.tone == 'elevated' %}elevated{% else %}low{% endif %}"
+                          style="font-size:0.9rem; padding:8px 18px;">
+                        {{ analysis.false_statement_probability.label }}
+                    </span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Score breakdown bar -->
+        <div class="mb-4">
+            <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
+                <span class="muted" style="font-size:0.8rem;">0% — Fully Authentic</span>
+                <span class="muted" style="font-size:0.8rem;">100% — Confirmed AI-Generated</span>
+            </div>
+            <div class="progress" style="height:18px; background:rgba(255,255,255,0.07); border-radius:100px;">
+                <div class="progress-bar" style="width:{{ analysis.false_statement_probability.score }}%;
+                    height:18px; border-radius:100px;
+                    background: {% if analysis.false_statement_probability.score >= 75 %}linear-gradient(90deg,#cc2222,#ff4444){% elif analysis.false_statement_probability.score >= 55 %}linear-gradient(90deg,#d8642a,#ff8844){% elif analysis.false_statement_probability.score >= 35 %}linear-gradient(90deg,#9a7a20,#d8b15a){% else %}linear-gradient(90deg,#15803d,#4ade80){% endif %};
+                    transition: width 1.2s ease;">
+                </div>
+            </div>
+            <div style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;">
+                <span style="font-size:0.72rem; color:var(--muted);">
+                    <span style="color:#4ade80;">■</span> 0–34% Authentic &nbsp;
+                    <span style="color:#d8b15a;">■</span> 35–54% Uncertain &nbsp;
+                    <span style="color:#ff8844;">■</span> 55–74% Likely Fake &nbsp;
+                    <span style="color:#ff4444;">■</span> 75–100% Confirmed Fake
+                </span>
+            </div>
+        </div>
+
+        <!-- 4 component scores -->
+        <div class="row g-3">
+            <div class="col-md-3 col-6">
+                <div class="metric-card text-center">
+                    <div class="muted mb-1" style="font-size:0.75rem; text-transform:uppercase; letter-spacing:.06em;">Detection Confidence</div>
+                    <div class="metric-value {% if analysis.is_likely_fake and analysis.confidence >= 65 %}tone-critical{% elif analysis.is_likely_fake %}tone-elevated{% else %}tone-low{% endif %}" style="font-size:1.8rem;">
+                        {{ analysis.confidence|floatformat:1 }}%
+                    </div>
+                    <div class="muted" style="font-size:0.72rem; margin-top:4px;">Visual forensics</div>
+                </div>
+            </div>
+            <div class="col-md-3 col-6">
+                <div class="metric-card text-center">
+                    <div class="muted mb-1" style="font-size:0.75rem; text-transform:uppercase; letter-spacing:.06em;">AI Voice Score</div>
+                    <div class="metric-value {% if analysis.audio_analysis.audio_fake_score >= 65 %}tone-critical{% elif analysis.audio_analysis.audio_fake_score >= 40 %}tone-elevated{% else %}tone-low{% endif %}" style="font-size:1.8rem;">
+                        {% if analysis.audio_analysis.available %}{{ analysis.audio_analysis.audio_fake_score }}%{% else %}<span style="font-size:1rem; color:var(--muted);">N/A</span>{% endif %}
+                    </div>
+                    <div class="muted" style="font-size:0.72rem; margin-top:4px;">Spectral + Pitch + MFCC</div>
+                </div>
+            </div>
+            <div class="col-md-3 col-6">
+                <div class="metric-card text-center">
+                    <div class="muted mb-1" style="font-size:0.75rem; text-transform:uppercase; letter-spacing:.06em;">Lip-Sync Mismatch</div>
+                    <div class="metric-value {% if analysis.audio_analysis.lipsync_score >= 65 %}tone-critical{% elif analysis.audio_analysis.lipsync_score >= 40 %}tone-elevated{% else %}tone-low{% endif %}" style="font-size:1.8rem;">
+                        {% if analysis.audio_analysis.available %}{{ analysis.audio_analysis.lipsync_score }}%{% else %}<span style="font-size:1rem; color:var(--muted);">N/A</span>{% endif %}
+                    </div>
+                    <div class="muted" style="font-size:0.72rem; margin-top:4px;">Pearson r = {% if analysis.audio_analysis.available %}{{ analysis.audio_analysis.correlation }}{% else %}—{% endif %}</div>
+                </div>
+            </div>
+            <div class="col-md-3 col-6">
+                <div class="metric-card text-center">
+                    <div class="muted mb-1" style="font-size:0.75rem; text-transform:uppercase; letter-spacing:.06em;">Weaponisation Risk</div>
+                    <div class="metric-value tone-elevated" style="font-size:1.8rem;">{{ analysis.weaponization.score }}%</div>
+                    <div class="muted" style="font-size:0.72rem; margin-top:4px;">Virality × Emotion × Timing</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Final verdict box -->
+        <div class="mt-4 p-3 p-lg-4" style="border-radius:14px;
+             background: rgba({% if analysis.is_likely_fake %}255,60,60{% else %}74,222,128{% endif %},0.07);
+             border: 1px solid rgba({% if analysis.is_likely_fake %}255,60,60{% else %}74,222,128{% endif %},0.25);">
+            <div style="display:flex; align-items:center; gap:16px; flex-wrap:wrap;">
+                <i class="fas {% if analysis.is_likely_fake %}fa-triangle-exclamation{% else %}fa-circle-check{% endif %}"
+                   style="font-size:2rem; color:{% if analysis.is_likely_fake %}#ff4444{% else %}#4ade80{% endif %};"></i>
+                <div>
+                    <div style="font-size:1.1rem; font-weight:700; margin-bottom:4px;">
+                        {% if analysis.is_likely_fake %}
+                            ⚠️ VERDICT: This video contains AI-generated deepfake content. The military officer's speech is likely synthetic.
+                        {% else %}
+                            ✅ VERDICT: No significant deepfake markers detected. Video appears authentic.
+                        {% endif %}
+                    </div>
+                    <div class="muted" style="font-size:0.85rem;">{{ analysis.analyst_note }}</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Detection Latency Counter -->
     <div class="panel-soft p-4 mb-4" style="border: 1px solid rgba(216,177,90,0.2);">
         <div class="row g-3 align-items-center text-center">

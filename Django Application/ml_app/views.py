@@ -104,32 +104,56 @@ CAPABILITY_CARDS = [
 ]
 
 WATCHLIST_ENTITIES = [
+    # National leadership
     {"name": "Narendra Modi", "role": "Prime Minister voice-face embedding"},
-    {"name": "S. Jaishankar", "role": "Diplomatic voiceprint watchlist"},
-    {"name": "Indian Army leadership", "role": "Command face cluster"},
-    {"name": "ISPR spokesperson", "role": "Adversarial narrative persona set"},
+    {"name": "S. Jaishankar", "role": "External Affairs Minister — diplomatic voiceprint"},
+    {"name": "Rajnath Singh", "role": "Defence Minister — command authority persona"},
+    {"name": "Amit Shah", "role": "Home Minister — security narrative target"},
+    # Military Command
+    {"name": "General Upendra Dwivedi (COAS)", "role": "Chief of Army Staff — highest military impersonation risk"},
+    {"name": "Admiral Dinesh Tripathi (CNS)", "role": "Chief of Naval Staff — naval command persona"},
+    {"name": "Air Chief Marshal AP Singh (CAS)", "role": "Chief of Air Staff — IAF command identity"},
+    {"name": "General Anil Chauhan (CDS)", "role": "Chief of Defence Staff — tri-service command persona"},
+    # Intelligence & Security
+    {"name": "Ajit Doval (NSA)", "role": "National Security Advisor — intelligence narrative target"},
+    # Adversarial
+    {"name": "ISPR spokesperson", "role": "Pakistan military media identity — adversarial narrative set"},
+    {"name": "Pakistan Army COAS", "role": "Cross-border military impersonation persona"},
 ]
 
 EVENT_WATCHLIST = [
     {
-        "title": "Border briefing cycle",
-        "window": "High sensitivity",
-        "detail": "False statements around ceasefire, casualties, or surrender narratives are likely to trend fastest during official briefings.",
+        "title": "Military Officer Statement Window",
+        "window": "Critical sensitivity",
+        "detail": "AI-generated clips of COAS/CDS/NSA making false statements about casualties, ceasefire, or operations spread fastest in the first 30 minutes after a live briefing.",
     },
     {
         "title": "Operation Sindoor replay moments",
         "window": "Narrative volatility",
-        "detail": "Historical conflict footage paired with synthetic speech remains a high-yield misinformation format.",
+        "detail": "Historical conflict footage paired with synthetic military speech remains the highest-yield misinformation format for adversarial actors.",
+    },
+    {
+        "title": "Border briefing cycle",
+        "window": "High sensitivity",
+        "detail": "False statements around ceasefire, casualties, or surrender narratives trend fastest during official military briefings.",
     },
     {
         "title": "Diplomatic escalation windows",
         "window": "Amplification risk",
-        "detail": "Foreign policy impersonation clips can alter public mood before verified statements are published.",
+        "detail": "Foreign policy impersonation clips can alter public mood before verified statements are published by MEA.",
     },
 ]
 
 # ─── OSINT Context narratives ─────────────────────────────────────────────────
 OSINT_CONTEXTS = {
+    "military_officer": {
+        "title": "Military Officer False Statement Pattern",
+        "narrative": ("AI-generated videos of Indian military officers (COAS, CDS, NSA, Corps Commanders) making false statements "
+                       "are the highest-priority threat vector. These clips typically fabricate ceasefire orders, casualty figures, "
+                       "or operational failures to demoralise troops and mislead civilians during active conflict windows."),
+        "badge": "CRITICAL THREAT",
+        "tone": "critical",
+    },
     "sindoor": {
         "title": "Operation Sindoor Narrative Window",
         "narrative": ("Synthetic clips exploiting Operation Sindoor visuals are a known high-yield format. "
@@ -172,11 +196,55 @@ def _get_threat_level(confidence, is_likely_fake):
 def _get_osint_context(video_name):
     """Return threat context card based on filename keywords."""
     name = (video_name or "").lower()
+    # Military officer keywords — highest priority
+    military_keywords = [
+        "general", "admiral", "air chief", "coas", "cds", "cns", "cas", "nsa",
+        "army chief", "defence", "colonel", "brigadier", "lieutenant", "major",
+        "corp", "brigade", "division", "regiment", "airforce", "navy", "army",
+        "dwivedi", "chauhan", "tripathi", "doval", "rajnath",
+        "false", "ceasefire", "casualty", "surrender", "operation", "offensive"
+    ]
+    if any(k in name for k in military_keywords):
+        return OSINT_CONTEXTS["military_officer"]
     if "sindoor" in name:
         return OSINT_CONTEXTS["sindoor"]
     if any(k in name for k in ["ispr", "pakistan", "pak"]):
         return OSINT_CONTEXTS["ispr_pakistan"]
     return OSINT_CONTEXTS["default"]
+
+
+def _compute_false_statement_probability(confidence, is_likely_fake, audio_analysis, signals):
+    """
+    Compute a clear False Statement Probability score (0-100%)
+    fusing detection confidence, audio AI score, and lip-sync mismatch.
+    This is the single clearest indicator for military officer deepfake speech.
+    """
+    base = float(confidence) if is_likely_fake else (100 - float(confidence))
+
+    audio_score = 50.0
+    lipsync_score = 50.0
+    if audio_analysis and audio_analysis.get("available"):
+        audio_score   = float(audio_analysis.get("audio_fake_score", 50.0))
+        lipsync_score = float(audio_analysis.get("lipsync_score", 50.0))
+
+    # Weighted fusion: detection confidence (40%) + audio (35%) + lipsync (25%)
+    fsp = base * 0.40 + audio_score * 0.35 + lipsync_score * 0.25
+    fsp = round(max(0.0, min(100.0, fsp)), 1)
+
+    if fsp >= 75:
+        label = "HIGHLY LIKELY AI-GENERATED"
+        tone  = "critical"
+    elif fsp >= 55:
+        label = "LIKELY AI-GENERATED"
+        tone  = "high"
+    elif fsp >= 35:
+        label = "UNCERTAIN"
+        tone  = "elevated"
+    else:
+        label = "LIKELY AUTHENTIC"
+        tone  = "low"
+
+    return {"score": fsp, "label": label, "tone": tone}
 
 
 if Dataset is not None:
@@ -892,6 +960,7 @@ def generate_demo_frames(video_path, num_frames=6):
     impersonation_matches = _build_impersonation_matches(video_name, max(face_swap_score, osint_score), is_likely_fake, confidence)
     weaponization = _build_weaponization(confidence, is_likely_fake, video_name)
     top_match = impersonation_matches[0] if impersonation_matches else None
+    false_statement_prob = _compute_false_statement_probability(confidence, is_likely_fake, audio_analysis, signals)
 
     return {
         "preprocessed_images": preprocessed_images,
@@ -919,6 +988,7 @@ def generate_demo_frames(video_path, num_frames=6):
             else "Store this scan as a baseline authentic sample unless new narrative context emerges."
         ),
         "audio_analysis": audio_analysis,
+        "false_statement_probability": false_statement_prob,
     }
 
 
