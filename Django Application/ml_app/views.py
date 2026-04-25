@@ -733,7 +733,7 @@ def generate_demo_frames(video_path, num_frames=6):
     audio_analysis = {}
     if full_audio_lipsync_analysis is not None:
         try:
-            audio_analysis = full_audio_lipsync_analysis(video_path, sample_fps=8.0)
+            audio_analysis = full_audio_lipsync_analysis(video_path, sample_fps=2.0)
         except Exception as _ae:
             print(f"[DRISHTI] Audio analysis error: {_ae}")
             audio_analysis = {}
@@ -1130,52 +1130,92 @@ def index(request):
     return render(request, index_template_name, _build_home_context(form, stats))
 
 
+def _sanitize_for_session(obj):
+    """Recursively convert numpy/non-serializable types to native Python for session storage."""
+    if obj is None:
+        return None
+    if isinstance(obj, dict):
+        return {k: _sanitize_for_session(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_sanitize_for_session(i) for i in obj]
+    try:
+        import numpy as _np
+        if isinstance(obj, _np.integer):
+            return int(obj)
+        if isinstance(obj, _np.floating):
+            return float(obj)
+        if isinstance(obj, _np.ndarray):
+            return obj.tolist()
+    except ImportError:
+        pass
+    return obj
+
+
 def predict_page(request):
     if "file_name" not in request.session:
+        messages.error(request, "Session expired. Please upload a video again.")
         return redirect("ml_app:home")
 
     video_path = request.session["file_name"]
-    seq_len = request.session["sequence_length"]
+    seq_len    = request.session.get("sequence_length", 60)
+
+    # Guard: check file actually exists
+    if not os.path.exists(video_path):
+        messages.error(request, "Uploaded video file not found. Please upload again.")
+        request.session.pop("file_name", None)
+        return redirect("ml_app:home")
 
     t_start = time.time()
     try:
         analysis, last_result = _build_result_payload(video_path, seq_len)
-    except ValueError as exc:
-        messages.error(request, str(exc))
+    except Exception as exc:
+        import traceback
+        print(f"[DRISHTI] predict_page error: {traceback.format_exc()}")
+        messages.error(request, f"Analysis failed: {exc}. Please try a different video.")
         return redirect("ml_app:home")
-    except RuntimeError as exc:
-        messages.error(request, str(exc))
-        return redirect("ml_app:home")
+
     detection_time = round(time.time() - t_start, 2)
 
     manual_baseline_min = 40
-    speedup = max(1, round((manual_baseline_min * 60) / max(detection_time, 0.1)))
-    threat = _get_threat_level(last_result["confidence"], last_result["verdict"] == "SYNTHETIC")
+    speedup  = max(1, round((manual_baseline_min * 60) / max(detection_time, 0.1)))
+    threat   = _get_threat_level(last_result["confidence"], last_result["verdict"] == "SYNTHETIC")
     osint_ctx = _get_osint_context(os.path.basename(video_path))
 
-    # Store threat_level string in result for logging/PDF
-    last_result["threat_level"] = threat["label"]
-    last_result["detection_time"] = detection_time
+    last_result["threat_level"]    = threat["label"]
+    last_result["detection_time"]  = detection_time
 
-    request.session["last_result"] = last_result
+    # Safe-store in session (convert numpy types → native Python)
+    try:
+        request.session["last_result"] = _sanitize_for_session(last_result)
+    except Exception as _se:
+        print(f"[DRISHTI] Session store error: {_se}")
+        request.session["last_result"] = {
+            "video": last_result.get("video", "unknown"),
+            "verdict": last_result.get("verdict", "UNKNOWN"),
+            "confidence": last_result.get("confidence", 0),
+        }
+
     log_path = os.path.join(settings.PROJECT_DIR, "logs", "detections.jsonl")
-    _append_jsonl(log_path, last_result)
+    try:
+        _append_jsonl(log_path, _sanitize_for_session(last_result))
+    except Exception as _le:
+        print(f"[DRISHTI] Log write error: {_le}")
 
     return render(
         request,
         predict_template_name,
         {
-            "output": last_result["verdict"],
-            "confidence": last_result["confidence"],
-            "original_video": os.path.basename(video_path),
-            "analysis": analysis,
-            "last_result": last_result,
-            "MEDIA_URL": settings.MEDIA_URL,
-            "detection_time": detection_time,
+            "output":           last_result["verdict"],
+            "confidence":       last_result["confidence"],
+            "original_video":   os.path.basename(video_path),
+            "analysis":         analysis,
+            "last_result":      last_result,
+            "MEDIA_URL":        settings.MEDIA_URL,
+            "detection_time":   detection_time,
             "manual_baseline_min": manual_baseline_min,
-            "speedup": speedup,
-            "threat": threat,
-            "osint_context": osint_ctx,
+            "speedup":          speedup,
+            "threat":           threat,
+            "osint_context":    osint_ctx,
         },
     )
 
