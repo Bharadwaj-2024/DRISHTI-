@@ -118,7 +118,13 @@
                 <p class="muted mb-0">Fused score from visual analysis, audio AI markers, and lip-sync correlation.</p>
             </div>
             <div style="text-align:center;">
-                <div class="metric-value {{ analysis.false_statement_probability.tone == 'critical' and 'tone-critical' or analysis.false_statement_probability.tone == 'high' and 'tone-critical' or analysis.false_statement_probability.tone == 'elevated' and 'tone-elevated' or 'tone-low' }}"
+                {% if analysis.false_statement_probability.tone == 'critical' or analysis.false_statement_probability.tone == 'high' %}
+                <div class="metric-value tone-critical"
+                {% elif analysis.false_statement_probability.tone == 'elevated' %}
+                <div class="metric-value tone-elevated"
+                {% else %}
+                <div class="metric-value tone-low"
+                {% endif %}
                      style="font-size:clamp(2.5rem,6vw,4rem); line-height:1; font-weight:900;">
                     {% if analysis.false_statement_probability.tone == 'critical' or analysis.false_statement_probability.tone == 'high' %}
                         <span style="color:#ff4444;">{{ analysis.false_statement_probability.score }}%</span>
