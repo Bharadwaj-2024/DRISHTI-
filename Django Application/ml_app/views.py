@@ -473,25 +473,60 @@ def _build_impersonation_matches(video_name, base_score, is_likely_fake, confide
 
     # Keyword presence in filename signals relevance
     keyword_map = {
-        "S. Jaishankar": {
-            "role": "External Affairs diplomatic voiceprint",
-            "keywords": ["jaishankar", "eam", "foreign", "ministry"],
-            "direct_match": any(k in name for k in ["jaishankar", "eam"]),
-        },
+        # National leadership
         "Narendra Modi": {
             "role": "Prime Minister face-voice embedding",
-            "keywords": ["modi", "pm", "prime", "minister"],
-            "direct_match": any(k in name for k in ["modi", "pm"]),
+            "keywords": ["modi", "pm ", "prime minister"],
+            "direct_match": any(k in name for k in ["modi", " pm "]),
         },
-        "Indian Army leadership": {
-            "role": "Army command persona cluster",
-            "keywords": ["army", "general", "chief", "military", "defence"],
-            "direct_match": any(k in name for k in ["army", "general", "chief"]),
+        "S. Jaishankar": {
+            "role": "External Affairs Minister — diplomatic voiceprint",
+            "keywords": ["jaishankar", "eam", "foreign ministry", "mea"],
+            "direct_match": any(k in name for k in ["jaishankar", "eam"]),
         },
+        "Rajnath Singh": {
+            "role": "Defence Minister — command authority persona",
+            "keywords": ["rajnath", "defence minister", "mod"],
+            "direct_match": any(k in name for k in ["rajnath"]),
+        },
+        # Military Command
+        "General Upendra Dwivedi (COAS)": {
+            "role": "Chief of Army Staff — highest military impersonation risk",
+            "keywords": ["dwivedi", "coas", "army chief", "chief of army"],
+            "direct_match": any(k in name for k in ["dwivedi", "coas"]),
+        },
+        "General Anil Chauhan (CDS)": {
+            "role": "Chief of Defence Staff — tri-service command persona",
+            "keywords": ["chauhan", "cds", "chief of defence", "defence staff"],
+            "direct_match": any(k in name for k in ["chauhan", "cds"]),
+        },
+        "Admiral Dinesh Tripathi (CNS)": {
+            "role": "Chief of Naval Staff — naval command persona",
+            "keywords": ["tripathi", "cns", "naval chief", "navy chief"],
+            "direct_match": any(k in name for k in ["tripathi", "cns"]),
+        },
+        "Air Chief Marshal AP Singh (CAS)": {
+            "role": "Chief of Air Staff — IAF command identity",
+            "keywords": ["ap singh", "cas", "air chief", "iaf chief"],
+            "direct_match": any(k in name for k in ["cas", "air chief"]),
+        },
+        "Ajit Doval (NSA)": {
+            "role": "National Security Advisor — intelligence narrative target",
+            "keywords": ["doval", "nsa", "national security"],
+            "direct_match": any(k in name for k in ["doval", "nsa"]),
+        },
+        # Generic military — catch-all for officer videos
+        "Indian Military Officer": {
+            "role": "Army/Navy/IAF command persona cluster",
+            "keywords": ["general", "admiral", "colonel", "brigadier", "major", "lieutenant",
+                         "army", "navy", "airforce", "military", "officer", "defence"],
+            "direct_match": any(k in name for k in ["general", "admiral", "colonel", "brigadier"]),
+        },
+        # Adversarial
         "ISPR spokesperson": {
-            "role": "Pakistan military media identity set",
+            "role": "Pakistan military media identity — adversarial narrative set",
             "keywords": ["ispr", "pakistan", "pak"],
-            "direct_match": any(k in name for k in ["ispr", "pakistan", "pak"]),
+            "direct_match": any(k in name for k in ["ispr", "pakistan"]),
         },
     }
 
@@ -1028,6 +1063,10 @@ def _build_result_payload(video_path, seq_len):
             if analysis["is_likely_fake"]
             else "Model and heuristic layers both lean authentic; retain for watchlist comparison."
         )
+        # Recalculate false_statement_probability with updated ML confidence
+        analysis["false_statement_probability"] = _compute_false_statement_probability(
+            confidence, analysis["is_likely_fake"], analysis.get("audio_analysis", {}), analysis["signals"]
+        )
 
     last_result = {
         "video": video_filename,
@@ -1045,6 +1084,9 @@ def _build_result_payload(video_path, seq_len):
         "telemetry": analysis["telemetry"],
         "analyst_note": analysis["analyst_note"],
         "timeline": analysis["timeline"],
+        "false_statement_probability": analysis.get("false_statement_probability", {}),
+        "audio_analysis": analysis.get("audio_analysis", {}),
+        "threat_level": "",   # filled in predict_page after _get_threat_level
     }
     last_result["report_text"] = _build_report_text(last_result)
 
