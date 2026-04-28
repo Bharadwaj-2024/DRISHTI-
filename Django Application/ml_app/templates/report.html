@@ -1,0 +1,222 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}DRISHTI — Analyst Report{% endblock %}
+
+{% block content %}
+<section class="app-shell py-4 py-lg-5">
+
+    <div class="panel p-4 p-lg-5 mb-4">
+        <div class="row g-4 align-items-center">
+            <div class="col-lg-8">
+                <div class="eyebrow mb-3"><i class="fas fa-file-lines"></i> Analyst Report</div>
+                <h1 style="font-size: clamp(2rem, 4vw, 3.5rem); margin-bottom: 12px;">DRISHTI Detection Report</h1>
+                <p class="muted mb-0">Full forensic breakdown for operator review and fact-check distribution.</p>
+            </div>
+            <div class="col-lg-4">
+                <div style="display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end;">
+                    <a class="btn btn-drishti" href="{% url 'ml_app:download_report' %}">
+                        <i class="fas fa-download me-2"></i>Download .txt
+                    </a>
+                    <a class="btn btn-drishti" href="{% url 'ml_app:download_pdf_report' %}">
+                        <i class="fas fa-file-pdf me-2"></i>Export PDF
+                    </a>
+                    <a class="btn btn-ghost" href="{% url 'ml_app:home' %}">
+                        <i class="fas fa-rotate me-2"></i>New analysis
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Verdict summary -->
+    <div class="row g-4 mb-4">
+        <div class="col-md-4">
+            <div class="metric-card h-100">
+                <div class="muted mb-2">Verdict</div>
+                <div class="metric-value {% if last_result.verdict == 'SYNTHETIC' %}tone-critical{% else %}tone-low{% endif %}">
+                    {{ last_result.verdict }}
+                </div>
+                <div class="mt-2">
+                    <span class="status-pill {% if last_result.verdict == 'SYNTHETIC' %}critical{% else %}low{% endif %}">
+                        <i class="fas {% if last_result.verdict == 'SYNTHETIC' %}fa-bell{% else %}fa-circle-check{% endif %}"></i>
+                        {% if last_result.verdict == 'SYNTHETIC' %}Escalate{% else %}Authentic{% endif %}
+                    </span>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="metric-card h-100">
+                <div class="muted mb-2">Confidence</div>
+                <div class="metric-value">{{ last_result.confidence }}%</div>
+                <div class="muted mt-2">Mode: {{ last_result.mode|upper }}</div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="metric-card h-100">
+                <div class="muted mb-2">Weaponisation</div>
+                <div class="metric-value tone-elevated">{{ last_result.weaponization.score }}%</div>
+                <div class="mt-2">
+                    <span class="status-pill {{ last_result.weaponization.tone }}">{{ last_result.weaponization.label }}</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Alert -->
+    <div class="panel p-4 p-lg-5 mb-4">
+        <div class="section-title">
+            <div>
+                <h2>Alert assessment</h2>
+                <p class="muted mb-0">{{ last_result.alert_title }}</p>
+            </div>
+            <span class="status-pill {% if last_result.verdict == 'SYNTHETIC' %}critical{% else %}low{% endif %}">
+                {{ last_result.verdict }}
+            </span>
+        </div>
+        <p class="mb-0">{{ last_result.alert_summary }}</p>
+        {% if last_result.analyst_note %}
+        <div class="panel-soft p-3 mt-4">
+            <div class="muted mb-1"><i class="fas fa-circle-info me-1"></i> Analyst note</div>
+            <p class="mb-0">{{ last_result.analyst_note }}</p>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Signal breakdown -->
+    <div class="panel p-4 p-lg-5 mb-4">
+        <div class="section-title">
+            <div>
+                <h2>Fused signal breakdown</h2>
+                <p class="muted mb-0">All detection modules contributing to the final verdict.</p>
+            </div>
+        </div>
+        {% for signal in last_result.signals %}
+        <div class="panel-soft p-3 p-lg-4 mb-3">
+            <div style="display: flex; justify-content: space-between; gap: 16px; align-items: start; margin-bottom: 10px;">
+                <div>
+                    <h3 style="font-size: 1.1rem; margin-bottom: 6px;">{{ signal.name }}</h3>
+                    <p class="muted mb-1">{{ signal.summary }}</p>
+                    <small class="muted">{{ signal.evidence }}</small>
+                </div>
+                <div style="text-align: right; min-width: 110px;">
+                    <div class="metric-value" style="font-size: 1.5rem;">{{ signal.score }}%</div>
+                    <span class="status-pill {{ signal.tone }}">{{ signal.label }}</span>
+                </div>
+            </div>
+            <div class="progress" style="height: 8px; background: rgba(255,255,255,0.08);">
+                <div class="progress-bar" role="progressbar" style="width: {{ signal.score }}%; background: linear-gradient(90deg, #d8b15a 0%, #ff7d7d 100%);"></div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- Watchlist matches -->
+    <div class="row g-4 mb-4">
+        <div class="col-xl-6">
+            <div class="panel p-4 p-lg-5 h-100">
+                <div class="section-title">
+                    <div>
+                        <h2>Watchlist matches</h2>
+                        <p class="muted mb-0">India-specific identity impersonation risk scores.</p>
+                    </div>
+                </div>
+                {% for match in last_result.impersonation_matches %}
+                <div class="panel-soft p-3 mb-3">
+                    <div style="display: flex; justify-content: space-between; gap: 12px; align-items: start;">
+                        <div>
+                            <strong>{{ match.subject }}</strong>
+                            <div class="muted">{{ match.role }}</div>
+                        </div>
+                        <div style="text-align: right;">
+                            <div class="metric-value" style="font-size: 1.4rem;">{{ match.score }}%</div>
+                            <span class="status-pill {{ match.tone }}">{{ match.label }}</span>
+                        </div>
+                    </div>
+                </div>
+                {% empty %}
+                <p class="muted">No watchlist matches recorded.</p>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- Recommended actions -->
+        <div class="col-xl-6">
+            <div class="panel p-4 p-lg-5 h-100">
+                <div class="section-title">
+                    <div>
+                        <h2>Recommended actions</h2>
+                        <p class="muted mb-0">Operator steps for PIB-style counter-disinformation workflow.</p>
+                    </div>
+                </div>
+                {% for action in last_result.recommended_actions %}
+                <div class="panel-soft p-3 mb-3">
+                    <div style="display: flex; gap: 12px; align-items: start;">
+                        <span class="status-pill elevated" style="min-width: 42px; justify-content: center;">
+                            <i class="fas fa-arrow-right"></i>
+                        </span>
+                        <div>{{ action }}</div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Raw report text -->
+    <div class="panel p-4 p-lg-5 mb-4">
+        <div class="section-title">
+            <div>
+                <h2>Raw report text</h2>
+                <p class="muted mb-0">Plain-text version ready for distribution.</p>
+            </div>
+            <a class="btn btn-ghost btn-sm" href="{% url 'ml_app:download_report' %}">
+                <i class="fas fa-download me-1"></i> Download
+            </a>
+        </div>
+        <pre style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.08); border-radius: 14px; padding: 24px; color: var(--muted); font-size: 0.88rem; white-space: pre-wrap; word-break: break-word;">{{ report_text }}</pre>
+    </div>
+
+    {% if pib_notice %}
+    <!-- PIB Notice block -->
+    <div class="panel p-4 p-lg-5 mb-4" style="border: 1px solid rgba(255,170,0,0.3);">
+        <div class="section-title mb-4">
+            <div>
+                <div class="eyebrow mb-1"><i class="fas fa-stamp me-2"></i>PIB Fact Check Notice</div>
+                <h2 style="margin-bottom: 4px;">Issued Notice on Record</h2>
+                <p class="muted mb-0">Logged: {{ pib_notice_meta.timestamp|default:"" }} &mdash; {{ pib_notice_meta.issued_by|default:"" }}</p>
+            </div>
+            <span class="status-pill elevated">Logged</span>
+        </div>
+        <pre style="background: rgba(255,170,0,0.05); border: 1px solid rgba(255,170,0,0.2); border-radius: 14px; padding: 24px; color: #ffd060; font-size: 0.82rem; white-space: pre-wrap; word-break: break-word; font-family: 'IBM Plex Mono', monospace;">{{ pib_notice }}</pre>
+    </div>
+    {% endif %}
+
+    <!-- Action bar -->
+    <div class="panel p-4 p-lg-5">
+        <div class="row g-3 align-items-center">
+            <div class="col-lg-6">
+                <h2 style="margin-bottom: 8px;">Next steps</h2>
+                <p class="muted mb-0">Submit analyst feedback, export PDF, or queue another clip.</p>
+            </div>
+            <div class="col-lg-6">
+                <div style="display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end;">
+                    <a class="btn btn-drishti" href="{% url 'ml_app:download_pdf_report' %}">
+                        <i class="fas fa-file-pdf me-2"></i>Export PDF
+                    </a>
+                    <a class="btn btn-ghost" href="{% url 'ml_app:feedback_page' %}">
+                        <i class="fas fa-comment-dots me-2"></i>Submit feedback
+                    </a>
+                    <a class="btn btn-ghost" href="{% url 'ml_app:dashboard' %}">
+                        <i class="fas fa-gauge-high me-2"></i>Dashboard
+                    </a>
+                    <a class="btn btn-ghost" href="{% url 'ml_app:home' %}">
+                        <i class="fas fa-rotate me-2"></i>New analysis
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</section>
+{% endblock %}

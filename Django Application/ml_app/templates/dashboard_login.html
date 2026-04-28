@@ -1,0 +1,58 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}DRISHTI — Analyst Login{% endblock %}
+
+{% block content %}
+<section class="app-shell py-4 py-lg-5" style="min-height: 80vh; display: flex; align-items: center;">
+    <div class="container" style="max-width: 460px; margin: 0 auto;">
+        <div class="panel p-5">
+            <div style="text-align: center; margin-bottom: 36px;">
+                <div style="font-size: 2.8rem; font-weight: 900; letter-spacing: -1px; color: var(--accent); margin-bottom: 8px;">DRISHTI</div>
+                <div class="eyebrow"><i class="fas fa-shield-halved me-2"></i>PIB Analyst Command Centre</div>
+                <p class="muted mt-3 mb-0">Restricted access. Authorised analysts only.</p>
+            </div>
+
+            {% if error %}
+            <div style="background: rgba(255,80,80,0.12); border: 1px solid rgba(255,80,80,0.3); border-radius: 12px; padding: 14px 18px; margin-bottom: 24px; color: #ff7d7d; display: flex; align-items: center; gap: 10px;">
+                <i class="fas fa-triangle-exclamation"></i>
+                <span>{{ error }}</span>
+            </div>
+            {% endif %}
+
+            <form method="POST" action="{% url 'ml_app:dashboard_login' %}">
+                {% csrf_token %}
+                <div class="mb-4">
+                    <label class="muted mb-2 d-block" style="font-size: 0.85rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;">
+                        Analyst ID
+                    </label>
+                    <div style="display: flex; align-items: center; background: rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; overflow: hidden;">
+                        <span style="padding: 0 16px; color: var(--accent);"><i class="fas fa-user-shield"></i></span>
+                        <input type="text" name="username" autocomplete="username"
+                            placeholder="pib_analyst"
+                            style="flex: 1; background: transparent; border: none; outline: none; color: var(--text); padding: 14px 16px 14px 0; font-family: 'IBM Plex Mono', monospace; font-size: 0.95rem;">
+                    </div>
+                </div>
+                <div class="mb-5">
+                    <label class="muted mb-2 d-block" style="font-size: 0.85rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;">
+                        Access Code
+                    </label>
+                    <div style="display: flex; align-items: center; background: rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; overflow: hidden;">
+                        <span style="padding: 0 16px; color: var(--accent);"><i class="fas fa-key"></i></span>
+                        <input type="password" name="password" autocomplete="current-password"
+                            placeholder="••••••••••"
+                            style="flex: 1; background: transparent; border: none; outline: none; color: var(--text); padding: 14px 16px 14px 0; font-family: 'IBM Plex Mono', monospace; font-size: 0.95rem;">
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-drishti w-100" style="padding: 15px; font-size: 1rem;">
+                    <i class="fas fa-right-to-bracket me-2"></i>Access Command Centre
+                </button>
+            </form>
+
+            <div class="muted mt-4" style="text-align: center; font-size: 0.82rem;">
+                <i class="fas fa-lock me-1"></i>Session-secured · Env-variable credentials
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}

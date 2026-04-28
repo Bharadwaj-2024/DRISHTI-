@@ -1,0 +1,133 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}DRISHTI — Analyst Feedback{% endblock %}
+
+{% block content %}
+<section class="app-shell py-4 py-lg-5">
+
+    <div class="panel p-4 p-lg-5 mb-4">
+        <div class="row g-4 align-items-center">
+            <div class="col-lg-8">
+                <div class="eyebrow mb-3"><i class="fas fa-comment-dots"></i> Analyst feedback</div>
+                <h1 style="font-size: clamp(2rem, 4vw, 3.5rem); margin-bottom: 12px;">Submit your assessment</h1>
+                <p class="muted mb-0">Your feedback trains the next generation of DRISHTI's detection loop. All inputs are logged for analyst review.</p>
+            </div>
+            <div class="col-lg-4">
+                <div class="panel-soft p-4">
+                    <div class="muted mb-2">Clip under review</div>
+                    <strong style="word-break: break-all;">{{ last_result.video }}</strong>
+                    <div class="muted mt-2">Verdict: 
+                        <span class="{% if last_result.verdict == 'SYNTHETIC' %}tone-critical{% else %}tone-low{% endif %}">
+                            {{ last_result.verdict }}
+                        </span>
+                    </div>
+                    <div class="muted">Confidence: {{ last_result.confidence }}%</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Current result summary -->
+    <div class="row g-4 mb-4">
+        <div class="col-md-4">
+            <div class="metric-card h-100">
+                <div class="muted mb-2">System verdict</div>
+                <div class="metric-value {% if last_result.verdict == 'SYNTHETIC' %}tone-critical{% else %}tone-low{% endif %}">
+                    {{ last_result.verdict }}
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="metric-card h-100">
+                <div class="muted mb-2">Confidence</div>
+                <div class="metric-value">{{ last_result.confidence }}%</div>
+                <div class="muted mt-1">{{ last_result.mode|upper }} mode</div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="metric-card h-100">
+                <div class="muted mb-2">Weaponisation risk</div>
+                <div class="metric-value tone-elevated">{{ last_result.weaponization.score }}%</div>
+                <div class="mt-1">
+                    <span class="status-pill {{ last_result.weaponization.tone }}">{{ last_result.weaponization.label }}</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Feedback form -->
+    <div class="panel p-4 p-lg-5 mb-4">
+        <div class="section-title mb-4">
+            <div>
+                <h2>Your analyst feedback</h2>
+                <p class="muted mb-0">Agree or disagree with the verdict, add context, flag edge cases.</p>
+            </div>
+        </div>
+
+        <form method="POST" action="{% url 'ml_app:submit_feedback' %}">
+            {% csrf_token %}
+            <input type="hidden" name="verdict" value="{{ last_result.verdict }}">
+            <input type="hidden" name="video_name" value="{{ last_result.video }}">
+            <input type="hidden" name="confidence" value="{{ last_result.confidence }}">
+
+            <div class="mb-4">
+                <label class="muted mb-2 d-block" style="font-size: 0.9rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;">
+                    Do you agree with the system verdict?
+                </label>
+                <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+                    <label class="panel-soft p-3" style="cursor: pointer; display: flex; align-items: center; gap: 10px; border-radius: 14px; min-width: 160px;">
+                        <input type="radio" name="agreement" value="agree" style="accent-color: var(--green);"> 
+                        <span><i class="fas fa-check me-1" style="color: var(--green);"></i> Yes, agree</span>
+                    </label>
+                    <label class="panel-soft p-3" style="cursor: pointer; display: flex; align-items: center; gap: 10px; border-radius: 14px; min-width: 160px;">
+                        <input type="radio" name="agreement" value="disagree" style="accent-color: var(--red);"> 
+                        <span><i class="fas fa-xmark me-1" style="color: var(--red);"></i> No, disagree</span>
+                    </label>
+                    <label class="panel-soft p-3" style="cursor: pointer; display: flex; align-items: center; gap: 10px; border-radius: 14px; min-width: 160px;">
+                        <input type="radio" name="agreement" value="unsure"> 
+                        <span><i class="fas fa-circle-question me-1" style="color: var(--accent);"></i> Unsure</span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="mb-4">
+                <label class="muted mb-2 d-block" for="feedback-text" style="font-size: 0.9rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;">
+                    Analyst notes <span style="color: var(--red);">*</span>
+                </label>
+                <textarea 
+                    id="feedback-text"
+                    name="feedback" 
+                    rows="6" 
+                    required
+                    placeholder="Describe what you observed, any context about this clip, or why you agree/disagree with the system verdict..."
+                    style="
+                        width: 100%; 
+                        background: rgba(0,0,0,0.3); 
+                        border: 1px solid rgba(255,255,255,0.1); 
+                        border-radius: 14px; 
+                        color: var(--text); 
+                        padding: 16px 18px; 
+                        font-family: 'IBM Plex Sans', sans-serif;
+                        font-size: 0.95rem;
+                        resize: vertical;
+                        outline: none;
+                    "
+                    onfocus="this.style.borderColor='rgba(216,177,90,0.4)'"
+                    onblur="this.style.borderColor='rgba(255,255,255,0.1)'"
+                ></textarea>
+            </div>
+
+            <div style="display: flex; flex-wrap: wrap; gap: 12px;">
+                <button type="submit" class="btn btn-drishti">
+                    <i class="fas fa-paper-plane me-2"></i>Submit feedback
+                </button>
+                <a href="{% url 'ml_app:report_page' %}" class="btn btn-ghost">
+                    <i class="fas fa-arrow-left me-2"></i>Back to report
+                </a>
+            </div>
+        </form>
+    </div>
+
+</section>
+{% endblock %}

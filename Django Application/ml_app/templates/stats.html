@@ -1,0 +1,168 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}DRISHTI — Detection Stats{% endblock %}
+
+{% block content %}
+<section class="app-shell py-4 py-lg-5">
+
+    <div class="panel p-4 p-lg-5 mb-4">
+        <div class="row g-4 align-items-center">
+            <div class="col-lg-8">
+                <div class="eyebrow mb-3"><i class="fas fa-chart-bar"></i> System statistics</div>
+                <h1 style="font-size: clamp(2rem, 4vw, 3.5rem); margin-bottom: 12px;">Detection Dashboard</h1>
+                <p class="muted mb-0">Aggregated metrics across all clips processed by DRISHTI in this session.</p>
+            </div>
+            <div class="col-lg-4" style="text-align: right;">
+                <a class="btn btn-ghost" href="{% url 'ml_app:home' %}">
+                    <i class="fas fa-rotate me-2"></i>Analyze new clip
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Aggregate stats -->
+    <div class="row g-4 mb-4">
+        <div class="col-md-4 col-lg-2">
+            <div class="metric-card h-100">
+                <div class="muted mb-2">Total scans</div>
+                <div class="metric-value">{{ stats.total }}</div>
+            </div>
+        </div>
+        <div class="col-md-4 col-lg-2">
+            <div class="metric-card h-100">
+                <div class="muted mb-2">Synthetic</div>
+                <div class="metric-value tone-critical">{{ stats.fake }}</div>
+            </div>
+        </div>
+        <div class="col-md-4 col-lg-2">
+            <div class="metric-card h-100">
+                <div class="muted mb-2">Authentic</div>
+                <div class="metric-value tone-low">{{ stats.real }}</div>
+            </div>
+        </div>
+        <div class="col-md-4 col-lg-3">
+            <div class="metric-card h-100">
+                <div class="muted mb-2">Avg confidence</div>
+                <div class="metric-value">{{ stats.avg_confidence }}%</div>
+            </div>
+        </div>
+        <div class="col-md-4 col-lg-3">
+            <div class="metric-card h-100">
+                <div class="muted mb-2">Fake rate</div>
+                <div class="metric-value tone-elevated">{{ stats.fake_rate }}%</div>
+                <div class="mt-2">
+                    <div class="progress" style="height: 8px; background: rgba(255,255,255,0.08);">
+                        <div class="progress-bar" role="progressbar" style="width: {{ stats.fake_rate }}%; background: linear-gradient(90deg, #d8b15a 0%, #ff7d7d 100%);"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-4 mb-4">
+        <!-- Recent detections -->
+        <div class="col-xl-7">
+            <div class="panel p-4 p-lg-5 h-100">
+                <div class="section-title">
+                    <div>
+                        <h2>Recent detections</h2>
+                        <p class="muted mb-0">Latest clips processed by the DRISHTI pipeline.</p>
+                    </div>
+                </div>
+
+                {% if recent_detections %}
+                <div style="overflow-x: auto;">
+                    <table style="width: 100%; border-collapse: collapse;">
+                        <thead>
+                            <tr style="border-bottom: 1px solid rgba(255,255,255,0.08);">
+                                <th class="muted" style="padding: 10px 12px; font-size: 0.8rem; letter-spacing: 0.06em; text-transform: uppercase; font-weight: 600; text-align: left;">Clip</th>
+                                <th class="muted" style="padding: 10px 12px; font-size: 0.8rem; letter-spacing: 0.06em; text-transform: uppercase; font-weight: 600; text-align: left;">Verdict</th>
+                                <th class="muted" style="padding: 10px 12px; font-size: 0.8rem; letter-spacing: 0.06em; text-transform: uppercase; font-weight: 600; text-align: left;">Confidence</th>
+                                <th class="muted" style="padding: 10px 12px; font-size: 0.8rem; letter-spacing: 0.06em; text-transform: uppercase; font-weight: 600; text-align: left;">Mode</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for det in recent_detections %}
+                            <tr style="border-bottom: 1px solid rgba(255,255,255,0.04);">
+                                <td style="padding: 12px; font-size: 0.88rem; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                                    {{ det.video|truncatechars:30 }}
+                                </td>
+                                <td style="padding: 12px;">
+                                    <span class="status-pill {% if det.verdict == 'SYNTHETIC' %}critical{% else %}low{% endif %}">
+                                        {{ det.verdict }}
+                                    </span>
+                                </td>
+                                <td style="padding: 12px;">{{ det.confidence }}%</td>
+                                <td style="padding: 12px;" class="muted">{{ det.mode|upper }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="panel-soft p-4" style="text-align: center;">
+                    <i class="fas fa-inbox" style="font-size: 2rem; color: var(--muted); margin-bottom: 12px; display: block;"></i>
+                    <p class="muted mb-0">No detections logged yet. Analyze a clip to get started.</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Recent feedback -->
+        <div class="col-xl-5">
+            <div class="panel p-4 p-lg-5 h-100">
+                <div class="section-title">
+                    <div>
+                        <h2>Analyst feedback</h2>
+                        <p class="muted mb-0">Most recent analyst loop inputs.</p>
+                    </div>
+                </div>
+
+                {% if recent_feedback %}
+                {% for fb in recent_feedback %}
+                <div class="panel-soft p-3 mb-3">
+                    <div style="display: flex; justify-content: space-between; align-items: start; gap: 10px; margin-bottom: 8px;">
+                        <strong style="font-size: 0.9rem;">{{ fb.video|truncatechars:24 }}</strong>
+                        <span class="status-pill {% if fb.verdict == 'SYNTHETIC' %}critical{% else %}low{% endif %}" style="font-size: 0.78rem;">
+                            {{ fb.verdict }}
+                        </span>
+                    </div>
+                    <p class="muted mb-0" style="font-size: 0.88rem;">{{ fb.feedback|truncatechars:120 }}</p>
+                </div>
+                {% endfor %}
+                {% else %}
+                <div class="panel-soft p-4" style="text-align: center;">
+                    <i class="fas fa-comment-slash" style="font-size: 2rem; color: var(--muted); margin-bottom: 12px; display: block;"></i>
+                    <p class="muted mb-0">No analyst feedback submitted yet.</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Event watchlist -->
+    <div class="panel p-4 p-lg-5">
+        <div class="section-title">
+            <div>
+                <h2>Active threat windows</h2>
+                <p class="muted mb-0">Current high-sensitivity periods for synthetic media weaponisation.</p>
+            </div>
+        </div>
+        <div class="row g-3">
+            {% for event in event_watchlist %}
+            <div class="col-md-4">
+                <div class="panel-soft p-4 h-100">
+                    <div style="display: flex; justify-content: space-between; align-items: start; gap: 10px; margin-bottom: 10px;">
+                        <strong>{{ event.title }}</strong>
+                        <span class="status-pill {% if forloop.first %}critical{% else %}elevated{% endif %}">{{ event.window }}</span>
+                    </div>
+                    <p class="muted mb-0" style="font-size: 0.88rem;">{{ event.detail }}</p>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+</section>
+{% endblock %}

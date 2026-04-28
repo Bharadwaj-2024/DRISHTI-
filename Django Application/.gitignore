@@ -1,10 +1,25 @@
 venv
 .vs
 .vscode
-/*
-!models/Readme.txt
+
+# Large model files
+ml_app/ml_models/*.dat
+ml_app/ml_models/*.bz2
+ml_app/ml_models/*.pth
+ml_app/ml_models/*.pt
+
+# Database
+db.sqlite3
+
+# Uploads
 uploaded_images/*
 !uploaded_images/Readme.txt
 uploaded_videos/*
 !uploaded_videos/Readme.txt
 
+# Python
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store

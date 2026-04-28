@@ -1,0 +1,177 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}DRISHTI — PIB Analyst Command Centre{% endblock %}
+
+{% block content %}
+<section class="app-shell py-4 py-lg-5">
+
+    <!-- Header bar -->
+    <div class="panel p-4 p-lg-5 mb-4">
+        <div class="row g-3 align-items-center">
+            <div class="col-lg-8">
+                <div class="eyebrow mb-2"><i class="fas fa-shield-halved"></i> PIB Analyst Command Centre</div>
+                <h1 style="font-size: clamp(1.8rem, 3.5vw, 3rem); margin-bottom: 6px;">Analyst Dashboard</h1>
+                <p class="muted mb-0">Authorised SOC view. Real-time deepfake detection feed — last 50 entries.</p>
+            </div>
+            <div class="col-lg-4 text-lg-end">
+                <a href="{% url 'ml_app:dashboard_logout' %}" class="btn btn-ghost" style="font-size: 0.85rem;">
+                    <i class="fas fa-right-from-bracket me-1"></i>Logout
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Top-bar stat counters -->
+    <div class="row g-3 mb-4">
+        <div class="col-6 col-md-3">
+            <div class="metric-card h-100" style="border-color: rgba(255,255,255,0.1);">
+                <div class="muted mb-1" style="font-size: 0.78rem; letter-spacing: 0.06em; text-transform: uppercase;">Total Analysed</div>
+                <div class="metric-value" style="font-size: 2rem;">{{ stats.total }}</div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="metric-card h-100" style="border-color: rgba(255,80,80,0.25);">
+                <div class="muted mb-1" style="font-size: 0.78rem; letter-spacing: 0.06em; text-transform: uppercase;">Synthetic Flags</div>
+                <div class="metric-value tone-critical" style="font-size: 2rem;">{{ stats.fake }}</div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="metric-card h-100" style="border-color: rgba(216,177,90,0.25);">
+                <div class="muted mb-1" style="font-size: 0.78rem; letter-spacing: 0.06em; text-transform: uppercase;">Impersonation Alerts</div>
+                <div class="metric-value tone-elevated" style="font-size: 2rem;">{{ impersonation_alerts }}</div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="metric-card h-100" style="border-color: rgba(100,200,255,0.2);">
+                <div class="muted mb-1" style="font-size: 0.78rem; letter-spacing: 0.06em; text-transform: uppercase;">Fact Checks Issued</div>
+                <div class="metric-value" style="font-size: 2rem; color: #64c8ff;">{{ fact_check_count }}</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Detection table -->
+    <div class="panel p-4 p-lg-5 mb-4">
+        <div class="section-title mb-4">
+            <div>
+                <h2>Detection Queue</h2>
+                <p class="muted mb-0">Sorted by threat severity — CRITICAL first. Last 50 detections.</p>
+            </div>
+            <span class="status-pill elevated"><i class="fas fa-circle me-1" style="font-size: 0.6rem;"></i>Live</span>
+        </div>
+
+        {% if detections %}
+        <div style="overflow-x: auto; border-radius: 12px; border: 1px solid rgba(255,255,255,0.07);">
+            <table style="width: 100%; border-collapse: collapse; font-family: 'IBM Plex Mono', monospace; font-size: 0.82rem; min-width: 900px;">
+                <thead>
+                    <tr style="background: rgba(255,255,255,0.04); border-bottom: 1px solid rgba(255,255,255,0.1);">
+                        <th style="padding: 12px 14px; text-align: left; color: var(--accent); font-weight: 600; font-size: 0.74rem; letter-spacing: 0.08em; text-transform: uppercase;">Filename</th>
+                        <th style="padding: 12px 14px; text-align: left; color: var(--accent); font-weight: 600; font-size: 0.74rem; letter-spacing: 0.08em; text-transform: uppercase;">Verdict</th>
+                        <th style="padding: 12px 14px; text-align: left; color: var(--accent); font-weight: 600; font-size: 0.74rem; letter-spacing: 0.08em; text-transform: uppercase;">Threat</th>
+                        <th style="padding: 12px 14px; text-align: left; color: var(--accent); font-weight: 600; font-size: 0.74rem; letter-spacing: 0.08em; text-transform: uppercase;">Confidence</th>
+                        <th style="padding: 12px 14px; text-align: left; color: var(--accent); font-weight: 600; font-size: 0.74rem; letter-spacing: 0.08em; text-transform: uppercase;">Impersonation</th>
+                        <th style="padding: 12px 14px; text-align: left; color: var(--accent); font-weight: 600; font-size: 0.74rem; letter-spacing: 0.08em; text-transform: uppercase;">Detect Time</th>
+                        <th style="padding: 12px 14px; text-align: left; color: var(--accent); font-weight: 600; font-size: 0.74rem; letter-spacing: 0.08em; text-transform: uppercase;">Timestamp</th>
+                        <th style="padding: 12px 14px; text-align: left; color: var(--accent); font-weight: 600; font-size: 0.74rem; letter-spacing: 0.08em; text-transform: uppercase;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for det in detections %}
+                    {% with tl=det.threat_level|default:"" v=det.verdict|default:"" %}
+                    <tr class="det-row"
+                        data-bg="{% if 'CRITICAL' in tl %}rgba(255,60,60,0.06){% elif 'HIGH' in tl or v == 'SYNTHETIC' %}rgba(255,120,40,0.04){% else %}transparent{% endif %}"
+                        style="border-bottom: 1px solid rgba(255,255,255,0.04);
+                        {% if 'CRITICAL' in tl %}background: rgba(255,60,60,0.06);{% elif 'HIGH' in tl or v == 'SYNTHETIC' %}background: rgba(255,120,40,0.04);{% endif %}
+                        transition: background 0.2s;">
+                        <td style="padding: 11px 14px; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text);">
+                            {{ det.video|default:"—"|truncatechars:22 }}
+                        </td>
+                        <td style="padding: 11px 14px;">
+                            <span class="status-pill {% if v == 'SYNTHETIC' %}critical{% else %}low{% endif %}" style="font-size: 0.76rem;">
+                                {{ v|default:"—" }}
+                            </span>
+                        </td>
+                        <td style="padding: 11px 14px;">
+                            {% if tl %}
+                            <span style="font-size: 0.75rem; font-weight: 700;
+                                {% if 'CRITICAL' in tl %}color: #ff4444;{% elif 'HIGH' in tl %}color: #ff8c42;{% elif 'MEDIUM' in tl %}color: #ffaa00;{% else %}color: #4ade80;{% endif %}">
+                                {{ tl }}
+                            </span>
+                            {% else %}—{% endif %}
+                        </td>
+                        <td style="padding: 11px 14px; color: var(--text);">{{ det.confidence|default:"—" }}%</td>
+                        <td style="padding: 11px 14px; color: var(--muted);">
+                            {% if det.impersonation_matches %}
+                                <span style="color: #ffaa00;"><i class="fas fa-user-xmark me-1"></i>{{ det.impersonation_matches|length }}</span>
+                            {% else %}
+                                <span style="color: var(--muted);">—</span>
+                            {% endif %}
+                        </td>
+                        <td style="padding: 11px 14px; color: var(--muted);">
+                            {% if det.detection_time %}{{ det.detection_time }}s{% else %}—{% endif %}
+                        </td>
+                        <td style="padding: 11px 14px; color: var(--muted); font-size: 0.76rem; white-space: nowrap;">
+                            {{ det.timestamp|default:"—"|truncatechars:19 }}
+                        </td>
+                        <td style="padding: 11px 14px;">
+                            <div style="display: flex; gap: 8px;">
+                                <a href="{% url 'ml_app:report_page' %}" style="font-size: 0.74rem; padding: 5px 10px; border-radius: 8px; background: rgba(216,177,90,0.15); color: var(--accent); text-decoration: none; border: 1px solid rgba(216,177,90,0.25); white-space: nowrap;">
+                                    <i class="fas fa-file-lines me-1"></i>Report
+                                </a>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endwith %}
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="panel-soft p-5" style="text-align: center;">
+            <i class="fas fa-inbox" style="font-size: 2.5rem; color: var(--muted); display: block; margin-bottom: 14px;"></i>
+            <p class="muted mb-0">No detections logged yet. Analyze a video to populate this queue.</p>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Fact checks panel -->
+    <div class="panel p-4 p-lg-5">
+        <div class="section-title mb-4">
+            <div>
+                <h2>Recent Fact Checks Issued</h2>
+                <p class="muted mb-0">Last 10 PIB fact check notices generated by analysts.</p>
+            </div>
+        </div>
+
+        {% if fact_checks %}
+        <div class="row g-3">
+            {% for fc in fact_checks %}
+            <div class="col-md-6">
+                <div class="panel-soft p-4" style="border-left: 3px solid {% if fc.verdict == 'SYNTHETIC' %}var(--red){% else %}var(--green){% endif %};">
+                    <div style="display: flex; justify-content: space-between; align-items: start; gap: 10px; margin-bottom: 10px;">
+                        <strong style="font-size: 0.88rem; font-family: 'IBM Plex Mono', monospace;">{{ fc.video|default:"Unknown"|truncatechars:28 }}</strong>
+                        <span class="status-pill {% if fc.verdict == 'SYNTHETIC' %}critical{% else %}low{% endif %}" style="font-size: 0.75rem; flex-shrink: 0;">{{ fc.verdict|default:"—" }}</span>
+                    </div>
+                    <p class="muted mb-2" style="font-size: 0.82rem;">{{ fc.analyst_note|default:"No note"|truncatechars:100 }}</p>
+                    <div class="muted" style="font-size: 0.76rem;">{{ fc.timestamp|default:"—"|truncatechars:19 }}</div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="panel-soft p-5" style="text-align: center;">
+            <i class="fas fa-comment-slash" style="font-size: 2rem; color: var(--muted); display: block; margin-bottom: 12px;"></i>
+            <p class="muted mb-0">No fact checks issued yet.</p>
+        </div>
+        {% endif %}
+    </div>
+
+</section>
+<script>
+document.querySelectorAll('.det-row').forEach(function(row) {
+    var orig = row.dataset.bg;
+    row.addEventListener('mouseover', function() { this.style.background = 'rgba(255,255,255,0.04)'; });
+    row.addEventListener('mouseout',  function() { this.style.background = orig; });
+});
+</script>
+{% endblock %}

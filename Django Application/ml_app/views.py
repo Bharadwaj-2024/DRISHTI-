@@ -1,3 +1,4 @@
+import concurrent.futures
 import glob
 import io
 import json
@@ -22,6 +23,16 @@ try:
     from .audio_lipsync import full_audio_lipsync_analysis
 except Exception:
     full_audio_lipsync_analysis = None
+
+try:
+    from .xception_detector import get_xception_detector
+except Exception:
+    get_xception_detector = None
+
+try:
+    from .audio_deepfake_model import get_audio_deepfake_detector
+except Exception:
+    get_audio_deepfake_detector = None
 
 try:
     import cv2
@@ -729,14 +740,69 @@ def generate_demo_frames(video_path, num_frames=6):
     fake_score = 0
     real_score = 0
 
-    # ── Audio + Lip-sync analysis ────────────────────────────────────────────
+    # ── ML Model Detection Results ───────────────────────────────────────────
+    xception_result = {}
+    wav2vec2_result = {}
+    detection_mode = "heuristic"
+
+    # ── Extract audio ONCE and share across all models ────────────────────────
+    shared_wav = video_path + "_drishti_shared.wav"
+    _wav_extracted = False
+    try:
+        _wav_cmd = [
+            "ffmpeg", "-y", "-i", video_path,
+            "-t", "15",  # limit to 15 seconds
+            "-vn", "-acodec", "pcm_s16le",
+            "-ar", "16000", "-ac", "1",
+            shared_wav,
+        ]
+        _wav_result = subprocess.run(_wav_cmd, capture_output=True, timeout=30)
+        _wav_extracted = _wav_result.returncode == 0 and os.path.exists(shared_wav)
+    except Exception:
+        _wav_extracted = False
+
+    # ── Run ML models in PARALLEL ─────────────────────────────────────────────
     audio_analysis = {}
-    if full_audio_lipsync_analysis is not None:
-        try:
-            audio_analysis = full_audio_lipsync_analysis(video_path, sample_fps=2.0)
-        except Exception as _ae:
-            print(f"[DRISHTI] Audio analysis error: {_ae}")
-            audio_analysis = {}
+
+    def _run_lipsync():
+        if full_audio_lipsync_analysis is not None:
+            try:
+                return full_audio_lipsync_analysis(
+                    video_path, sample_fps=2.0,
+                    wav_path=shared_wav if _wav_extracted else None
+                )
+            except Exception as _ae:
+                print(f"[DRISHTI] Audio analysis error: {_ae}")
+        return {}
+
+    def _run_xception():
+        if get_xception_detector is not None:
+            try:
+                _xc = get_xception_detector()
+                if _xc is not None and _xc.is_available:
+                    return _xc.detect_video(video_path, sample_fps=1.5, max_frames=12)
+            except Exception as _xe:
+                print(f"[DRISHTI] XceptionNet error: {_xe}")
+        return {}
+
+    def _run_wav2vec2():
+        if get_audio_deepfake_detector is not None and _wav_extracted:
+            try:
+                _ad = get_audio_deepfake_detector()
+                if _ad is not None and _ad.is_available:
+                    return _ad.detect_video(video_path, wav_path=shared_wav)
+            except Exception as _ae2:
+                print(f"[DRISHTI] Wav2Vec2 error: {_ae2}")
+        return {}
+
+    # Execute all three models concurrently
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+        fut_lip = executor.submit(_run_lipsync)
+        fut_xc = executor.submit(_run_xception)
+        fut_w2v = executor.submit(_run_wav2vec2)
+        audio_analysis = fut_lip.result()
+        xception_result = fut_xc.result()
+        wav2vec2_result = fut_w2v.result()
 
     if cv2 is None:
         lowered_name = video_name.lower()
@@ -901,82 +967,163 @@ def generate_demo_frames(video_path, num_frames=6):
 
     confidence = _clamp(confidence, 50.0, 95.0)
 
-    # --- Proportional signal scoring ---
-    # For AUTHENTIC videos: scores stay LOW (5-25%) unless specific frame metrics say otherwise.
-    # For SYNTHETIC videos: scores scale with confidence and frame anomaly strength.
+    # ── ML Models already ran in parallel above ──────────────────────────────
+    # Clean up shared WAV file
+    try:
+        if os.path.exists(shared_wav):
+            os.remove(shared_wav)
+    except Exception:
+        pass
+
+    # ── Determine detection mode ─────────────────────────────────────────────
+    has_xception = xception_result.get("available", False)
+    has_wav2vec2 = wav2vec2_result.get("available", False)
+    has_lipsync  = audio_analysis.get("available", False)
+
+    mode_parts = []
+    if has_xception: mode_parts.append("xception")
+    if has_wav2vec2: mode_parts.append("wav2vec2")
+    if has_lipsync:  mode_parts.append("lipsync")
+    detection_mode = "+".join(mode_parts) if mode_parts else "heuristic"
+
+    # ── FUSION: override heuristic scores with real ML predictions ────────────
+    if has_xception:
+        xc_fake_conf = xception_result.get("fake_confidence", 50.0)
+        xc_pred = xception_result.get("prediction", 0)
+        xc_ratio = xception_result.get("fake_ratio", 0.0)
+        # XceptionNet says fake with high confidence
+        if xc_pred == 1 and xc_fake_conf > 55:
+            is_likely_fake = True
+            confidence = _clamp(xc_fake_conf, 55.0, 98.0)
+        elif xc_pred == 0 and xc_fake_conf < 40:
+            is_likely_fake = False
+            confidence = _clamp(xception_result.get("real_confidence", 70.0), 55.0, 98.0)
+
+    if has_wav2vec2:
+        w2v_fake = wav2vec2_result.get("audio_fake_score", 50.0)
+        if w2v_fake > 65:
+            # Audio model strongly suggests fake — boost
+            if has_xception and xception_result.get("prediction") == 1:
+                confidence = _clamp(confidence * 0.55 + w2v_fake * 0.45, 60.0, 99.0)
+            elif not has_xception:
+                is_likely_fake = True
+                confidence = _clamp(w2v_fake, 55.0, 95.0)
+
+    # Full fusion if all three models available
+    if has_xception and has_wav2vec2 and has_lipsync:
+        xc_score = xception_result.get("fake_confidence", 50.0)
+        w2v_score = wav2vec2_result.get("audio_fake_score", 50.0)
+        lip_score = audio_analysis.get("lipsync_score", 50.0)
+        fused = xc_score * 0.45 + w2v_score * 0.30 + lip_score * 0.25
+        is_likely_fake = fused >= 50.0
+        confidence = _clamp(fused, 50.0, 99.0)
+
+    # ── Signal scoring from ML models ────────────────────────────────────────
+    if has_xception:
+        face_swap_score = _clamp(xception_result.get("fake_confidence", 50.0))
+    elif is_likely_fake:
+        conf_lift = max(0.0, confidence - 55.0)
+        face_swap_score = _clamp(10.0 + fake_score * 5.5 + conf_lift * 1.1)
+    else:
+        sharpness_penalty = max(0.0, (200.0 - avg_laplacian) / 200.0) * 8.0
+        face_swap_score = _clamp(3.0 + sharpness_penalty + real_score * 0.5)
+
+    if has_wav2vec2:
+        audio_fake_signal_score = _clamp(wav2vec2_result.get("audio_fake_score", 50.0))
+    elif audio_analysis.get("available", False):
+        audio_fake_signal_score = _clamp(audio_analysis.get("audio_fake_score", 50.0))
+    elif is_likely_fake:
+        conf_lift = max(0.0, confidence - 55.0)
+        audio_fake_signal_score = _clamp(10.0 + fake_score * 4.5 + conf_lift * 0.9)
+    else:
+        motion_penalty = max(0.0, (5.0 - avg_frame_diff) / 5.0) * 6.0
+        audio_fake_signal_score = _clamp(3.0 + motion_penalty)
+
+    if has_lipsync:
+        lipsync_signal_score = _clamp(audio_analysis.get("lipsync_score", 50.0))
+    elif is_likely_fake:
+        conf_lift = max(0.0, confidence - 55.0)
+        lipsync_signal_score = _clamp(8.0 + fake_score * 4.0 + (12.0 if std_frame_diff < 2.0 else 4.0) + conf_lift * 0.8)
+    else:
+        motion_penalty = max(0.0, (5.0 - avg_frame_diff) / 5.0) * 6.0
+        lipsync_signal_score = _clamp(3.0 + motion_penalty + (5.0 if std_frame_diff < 1.0 else 0.0))
 
     if is_likely_fake:
-        # Scale from actual fake_score and confidence
-        conf_lift = max(0.0, confidence - 55.0)  # 0 at 55%, up to 40 at 95%
-        face_swap_score = _clamp(10.0 + fake_score * 5.5 + conf_lift * 1.1)
-        lip_sync_score = _clamp(8.0 + fake_score * 4.0 + (12.0 if std_frame_diff < 2.0 else 4.0) + conf_lift * 0.8)
+        conf_lift = max(0.0, confidence - 55.0)
         metadata_score = _clamp(
-            6.0
-            + fake_score * 3.0
+            6.0 + fake_score * 3.0
             + (10.0 if extension in {".avi", ".wmv", ".mkv"} else 3.0)
             + (8.0 if duration_seconds and duration_seconds < 8 else 0.0)
             + conf_lift * 0.5
         )
-        av_sync_score = _clamp(10.0 + fake_score * 4.5 + (12.0 if avg_frame_diff < 2.5 else 3.0) + conf_lift * 0.9)
-        lowered_name = video_name.lower()
-        osint_keywords = ["sindoor", "army", "strike", "general", "war", "ispr", "jaishankar", "modi"]
-        osint_hits = sum(1 for k in osint_keywords if k in lowered_name)
-        osint_score = _clamp(8.0 + osint_hits * 10.0 + fake_score * 3.0 + conf_lift * 0.7)
     else:
-        # Authentic video: scores reflect actual frame quality, NOT inflated
-        # A clean video with high Laplacian sharpness gets very low scores
-        sharpness_penalty = max(0.0, (200.0 - avg_laplacian) / 200.0) * 8.0  # 0 for sharp, up to 8 for blurry
-        motion_penalty = max(0.0, (5.0 - avg_frame_diff) / 5.0) * 6.0  # penalty for too-static video
-
-        face_swap_score = _clamp(3.0 + sharpness_penalty + real_score * 0.5)
-        lip_sync_score = _clamp(3.0 + motion_penalty + (5.0 if std_frame_diff < 1.0 else 0.0))
         metadata_score = _clamp(
-            2.0
-            + (5.0 if extension in {".avi", ".wmv", ".mkv"} else 1.0)
+            2.0 + (5.0 if extension in {".avi", ".wmv", ".mkv"} else 1.0)
             + (3.0 if duration_seconds and duration_seconds < 5 else 0.0)
         )
-        av_sync_score = _clamp(3.0 + motion_penalty)
-        lowered_name = video_name.lower()
-        osint_keywords = ["sindoor", "army", "strike", "general", "war", "ispr", "jaishankar", "modi"]
-        osint_hits = sum(1 for k in osint_keywords if k in lowered_name)
-        osint_score = _clamp(2.0 + osint_hits * 4.0)  # max ~34% even with all keywords, but video is authentic
 
-    # ── Audio + Lip-sync signal scores ───────────────────────────────────────
-    _al = audio_analysis  # shorthand
+    lowered_name = video_name.lower()
+    osint_keywords = ["sindoor", "army", "strike", "general", "war", "ispr", "jaishankar", "modi"]
+    osint_hits = sum(1 for k in osint_keywords if k in lowered_name)
+    if is_likely_fake:
+        conf_lift = max(0.0, confidence - 55.0)
+        osint_score = _clamp(8.0 + osint_hits * 10.0 + fake_score * 3.0 + conf_lift * 0.7)
+    else:
+        osint_score = _clamp(2.0 + osint_hits * 4.0)
+
+    _al = audio_analysis
     _al_available = _al.get("available", False)
-    audio_fake_signal_score = _al.get("audio_fake_score", av_sync_score) if _al_available else av_sync_score
-    lipsync_signal_score    = _al.get("lipsync_score",    lip_sync_score) if _al_available else lip_sync_score
-
     _al_markers = _al.get("audio_markers", {})
     _al_corr    = _al.get("correlation", 0.0)
     _al_lip_n   = _al.get("lip_frames_sampled", 0)
 
+    # Build evidence strings
+    _xc_evidence = (
+        f"XceptionNet: {xception_result.get('frames_analyzed', 0)} frames, "
+        f"{xception_result.get('faces_found', 0)} faces, "
+        f"fake ratio {xception_result.get('fake_ratio', 0):.1%}. "
+        + ("Face-swap artifacts detected." if face_swap_score >= 55 else "No face-swap artifacts.")
+    ) if has_xception else (
+        f"Laplacian sharpness mean {avg_laplacian:.1f}, variance {std_laplacian:.1f}. "
+        + ("Anomalies detected." if is_likely_fake else "No significant artifacts found.")
+    )
+
+    _w2v_evidence = (
+        f"Wav2Vec2: {wav2vec2_result.get('label', 'UNKNOWN')} "
+        f"({wav2vec2_result.get('confidence', 50):.1f}% confidence). "
+        + ("AI-generated speech detected." if audio_fake_signal_score >= 55 else "Natural human speech.")
+    ) if has_wav2vec2 else (
+        (
+            f"Pitch std {_al_markers.get('pitch_std_hz', 0):.1f} Hz, "
+            f"MFCC var {_al_markers.get('mfcc_variance', 0):.0f}, "
+            f"spectral flatness {_al_markers.get('mean_spectral_flatness', 0):.4f}. "
+            + ("AI voice markers detected." if audio_fake_signal_score >= 55 else "Audio within natural range.")
+        ) if _al_available else "Audio analysis unavailable (install librosa + ffmpeg)."
+    )
+
+    _lip_evidence = (
+        f"Pearson r={_al_corr:.3f} across {_al_lip_n} frames. "
+        + ("Significant lip-audio mismatch." if lipsync_signal_score >= 60 else "Lip movements align with audio.")
+    ) if _al_available else "Lip-sync analysis unavailable."
+
     signals = [
         _make_signal(
-            "Face-swap detector",
+            "Face-swap detector" + (" (XceptionNet)" if has_xception else ""),
             face_swap_score,
-            "Looks for edge smoothing, spatial inconsistencies, and identity-region artifacts.",
-            f"Laplacian sharpness mean {avg_laplacian:.1f}, variance {std_laplacian:.1f}. {'Anomalies detected.' if is_likely_fake else 'No significant artifacts found.'}",
+            "XceptionNet per-frame analysis of facial artifacts and identity manipulation." if has_xception else "Looks for edge smoothing, spatial inconsistencies, and identity-region artifacts.",
+            _xc_evidence,
         ),
         _make_signal(
-            "AI Voice Synthesis",
+            "AI Voice Synthesis" + (" (Wav2Vec2)" if has_wav2vec2 else ""),
             audio_fake_signal_score,
-            "Analyses spectral flatness, MFCC variance, pitch (F0) standard deviation, and pause regularity for AI synthesis markers.",
-            (
-                f"Pitch std {_al_markers.get('pitch_std_hz', 0):.1f} Hz, "
-                f"MFCC var {_al_markers.get('mfcc_variance', 0):.0f}, "
-                f"spectral flatness {_al_markers.get('mean_spectral_flatness', 0):.4f}. "
-                + ("AI voice markers detected." if audio_fake_signal_score >= 55 else "Audio within natural human speech range.")
-            ) if _al_available else "Audio analysis unavailable (install librosa + ffmpeg).",
+            "Wav2Vec2 neural classifier for AI-generated speech detection." if has_wav2vec2 else "Spectral and MFCC analysis for AI synthesis markers.",
+            _w2v_evidence,
         ),
         _make_signal(
-            "Lip-sync integrity",
+            "Lip-sync integrity" + (" (dlib+MAR)" if _al_available else ""),
             lipsync_signal_score,
-            "Correlates mouth-openness landmarks (MediaPipe FaceMesh) with audio RMS energy frame-by-frame.",
-            (
-                f"Pearson r={_al_corr:.3f} across {_al_lip_n} sampled frames. "
-                + ("Significant lip-audio mismatch — deepfake indicator." if lipsync_signal_score >= 60 else "Lip movements align with audio energy.")
-            ) if _al_available else "Lip-sync analysis unavailable (install mediapipe + ffmpeg).",
+            "Mouth Aspect Ratio (MAR) via dlib 68-landmark tracking correlated with audio energy." if _al_available else "Lip-sync correlation analysis.",
+            _lip_evidence,
         ),
         _make_signal(
             "Metadata forensics",
@@ -1024,6 +1171,9 @@ def generate_demo_frames(video_path, num_frames=6):
         ),
         "audio_analysis": audio_analysis,
         "false_statement_probability": false_statement_prob,
+        "detection_mode": detection_mode,
+        "xception_result": xception_result,
+        "wav2vec2_result": wav2vec2_result,
     }
 
 
@@ -1033,12 +1183,14 @@ def _build_result_payload(video_path, seq_len):
 
     model_path = get_accurate_model(seq_len) if torch is not None else None
 
+    # Use the detection mode from the analysis (fusion engine)
+    fusion_mode = analysis.get("detection_mode", "heuristic")
+
     if torch is None or model_path is None:
-        # No ML model available — use heuristic demo mode
         verdict = "SYNTHETIC" if analysis["is_likely_fake"] else "AUTHENTIC"
         confidence = analysis["confidence"]
-        mode = "demo"
-        model_name = "Heuristic multimodal fusion"
+        mode = fusion_mode if fusion_mode != "heuristic" else "demo"
+        model_name = fusion_mode.replace("+", " + ").upper() if fusion_mode != "heuristic" else "Heuristic multimodal fusion"
     else:
         dataset = validation_dataset([video_path], seq_len, train_transforms)
 
