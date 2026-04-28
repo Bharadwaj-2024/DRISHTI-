@@ -507,6 +507,32 @@ class XceptionDetector:
             results.append((pred, conf))
         return results
 
+    def detect_frame(self, frame_bgr):
+        """
+        Analyze a single image/frame for deepfake artifacts.
+        Returns: (prediction, confidence, face_found)
+            prediction: 0=real, 1=fake
+            confidence: float 0-100
+            face_found: bool
+        """
+        if not self.is_available or cv2 is None:
+            return 0, 50.0, False
+
+        faces = self._detect_faces_fast(frame_bgr)
+        if not faces:
+            return 0, 50.0, False
+
+        tensor = self._preprocess_face(frame_bgr, faces[0])
+        if tensor is None:
+            return 0, 50.0, False
+
+        results = self._batch_inference([tensor])
+        if not results:
+            return 0, 50.0, False
+
+        pred, conf = results[0]
+        return pred, conf, True
+
     def detect_video(self, video_path, sample_fps=1.5, max_frames=15):
         """
         Analyze a video file by sampling frames and running per-frame detection.

@@ -81,7 +81,7 @@
                 <div class="section-title">
                     <div>
                         <h2>Analyst intake</h2>
-                        <p class="muted mb-0">Upload a suspicious clip or paste a direct video URL.</p>
+                        <p class="muted mb-0">Upload a suspicious clip, image, or paste a direct video URL.</p>
                     </div>
                     <span class="status-pill low"><i class="fas fa-stopwatch"></i> Demo-ready</span>
                 </div>
@@ -89,7 +89,10 @@
                 <!-- Tab switcher -->
                 <div style="display: flex; gap: 8px; margin-bottom: 24px; background: rgba(0,0,0,0.25); border-radius: 14px; padding: 5px;">
                     <button id="tab-file" onclick="switchTab('file')" style="flex:1; padding: 10px; border-radius: 10px; border: none; background: rgba(216,177,90,0.18); color: var(--accent); font-weight: 600; cursor: pointer; font-size: 0.9rem;">
-                        <i class="fas fa-file-video me-2"></i>File Upload
+                        <i class="fas fa-file-video me-2"></i>Video Upload
+                    </button>
+                    <button id="tab-image" onclick="switchTab('image')" style="flex:1; padding: 10px; border-radius: 10px; border: none; background: transparent; color: var(--muted); font-weight: 600; cursor: pointer; font-size: 0.9rem;">
+                        <i class="fas fa-image me-2"></i>Image Analysis
                     </button>
                     <button id="tab-url" onclick="switchTab('url')" style="flex:1; padding: 10px; border-radius: 10px; border: none; background: transparent; color: var(--muted); font-weight: 600; cursor: pointer; font-size: 0.9rem;">
                         <i class="fas fa-link me-2"></i>URL Ingest
@@ -181,6 +184,51 @@
                     <div class="muted mt-2">yt-dlp is downloading the clip. This may take 10–60 seconds.</div>
                 </div>
                 </div>
+
+                <!-- Image upload form -->
+                <div id="panel-image" style="display:none;">
+                <form class="form" method="POST" enctype="multipart/form-data" name="image-upload" id="image-upload">
+                    {% csrf_token %}
+                    <div class="panel-soft p-3 p-lg-4 mb-4">
+                        <label class="form-label fw-semibold mb-3">Suspicious image file</label>
+                        <div class="input-group input-group-lg">
+                            <span class="input-group-text" style="background: rgba(216, 177, 90, 0.12); border: 1px solid rgba(216, 177, 90, 0.18); color: #efcb87;">
+                                <i class="fas fa-image"></i>
+                            </span>
+                            <input type="file" class="form-control" id="{{ image_form.upload_image_file.id_for_label }}" name="{{ image_form.upload_image_file.name }}" accept="image/*" required
+                                   onchange="previewImage(this)">
+                        </div>
+                        <div class="muted mt-2">Supports JPG, PNG, WebP, BMP. Detects AI-generated faces, GAN artifacts, and synthetic image patterns.</div>
+                    </div>
+                    <div class="row g-4 mb-4">
+                        <div class="col-lg-7">
+                            <div class="panel-soft p-3 p-lg-4 h-100">
+                                <div class="muted mb-2">Image Preview</div>
+                                <div style="border-radius: 12px; overflow: hidden; background: rgba(0,0,0,0.2); min-height: 180px; display: grid; place-items: center;">
+                                    <img id="image-preview" src="" alt="Upload an image to preview"
+                                         style="max-width: 100%; max-height: 300px; object-fit: contain; display: none; border-radius: 12px;">
+                                    <div id="image-placeholder" class="muted" style="padding: 40px;"><i class="fas fa-cloud-upload-alt me-2"></i>No image selected</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-lg-5">
+                            <div class="panel-soft p-3 p-lg-4 h-100">
+                                <div class="muted mb-2">Analysis pipeline</div>
+                                <ul class="mb-0 ps-3" style="color: var(--text); line-height: 2;">
+                                    <li>Frequency domain (DCT)</li>
+                                    <li>Edge consistency check</li>
+                                    <li>Color distribution scan</li>
+                                    <li>Noise pattern analysis</li>
+                                    <li>XceptionNet face detection</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-drishti w-100">
+                        <i class="fas fa-microscope me-2"></i>Detect AI-Generated Image
+                    </button>
+                </form>
+                </div>
             </div>
         </div>
 
@@ -248,13 +296,29 @@
         $('#slider-value').html(sliderSequenceNumbers[$("#slider").slider("value")] + ' frames');
     });
     function switchTab(tab) {
-        var f = tab === 'file';
-        document.getElementById('panel-file').style.display = f ? 'block' : 'none';
-        document.getElementById('panel-url').style.display  = f ? 'none'  : 'block';
-        document.getElementById('tab-file').style.background = f ? 'rgba(216,177,90,0.18)' : 'transparent';
-        document.getElementById('tab-file').style.color = f ? 'var(--accent)' : 'var(--muted)';
-        document.getElementById('tab-url').style.background  = f ? 'transparent' : 'rgba(216,177,90,0.18)';
-        document.getElementById('tab-url').style.color  = f ? 'var(--muted)' : 'var(--accent)';
+        var panels = ['file', 'image', 'url'];
+        panels.forEach(function(p) {
+            var panel = document.getElementById('panel-' + p);
+            var btn = document.getElementById('tab-' + p);
+            if (panel) panel.style.display = (p === tab) ? 'block' : 'none';
+            if (btn) {
+                btn.style.background = (p === tab) ? 'rgba(216,177,90,0.18)' : 'transparent';
+                btn.style.color = (p === tab) ? 'var(--accent)' : 'var(--muted)';
+            }
+        });
+    }
+    function previewImage(input) {
+        var preview = document.getElementById('image-preview');
+        var placeholder = document.getElementById('image-placeholder');
+        if (input.files && input.files[0]) {
+            var reader = new FileReader();
+            reader.onload = function(e) {
+                preview.src = e.target.result;
+                preview.style.display = 'block';
+                if (placeholder) placeholder.style.display = 'none';
+            };
+            reader.readAsDataURL(input.files[0]);
+        }
     }
     function showUrlSpinner() {
         document.getElementById('url-ingest-form').style.display = 'none';

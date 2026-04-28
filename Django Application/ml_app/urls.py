@@ -11,6 +11,7 @@ urlpatterns = [
     path('', index, name='home'),
     path('about/', about, name='about'),
     path('predict/', predict_page, name='predict'),
+    path('image-predict/', views.image_predict_page, name='image_predict'),
     path('url-ingest/', views.url_ingest, name='url_ingest'),
     path('report/', views.report_page, name='report_page'),
     path('report/download/', views.download_report, name='download_report'),

@@ -1,0 +1,224 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}DRISHTI — Image Analysis{% endblock %}
+
+{% block content %}
+<section class="app-shell py-4 py-lg-5">
+
+    <!-- Verdict Header -->
+    <div class="panel p-4 p-lg-5 mb-4">
+        <div class="row g-4 align-items-center">
+            <div class="col-lg-7">
+                <div class="eyebrow mb-3">
+                    <i class="fas fa-image"></i> Image Forensic Analysis
+                </div>
+                <h1 style="font-size: clamp(1.6rem, 4vw, 3rem); line-height: 1.05; margin-bottom: 14px;">
+                    {% if analysis.is_ai_generated %}
+                        <span class="tone-critical"><i class="fas fa-robot me-2"></i>{{ analysis.verdict }}</span>
+                    {% else %}
+                        <span class="tone-low"><i class="fas fa-check-circle me-2"></i>{{ analysis.verdict }}</span>
+                    {% endif %}
+                </h1>
+                <p style="font-size: 1.1rem; color: #f2f6f3; max-width: 640px;">
+                    Forensic confidence: <strong>{{ analysis.confidence }}%</strong>
+                    {% if analysis.face_detected %}
+                        &mdash; Face detected, XceptionNet analysis active.
+                    {% else %}
+                        &mdash; No face detected, pixel forensics only.
+                    {% endif %}
+                </p>
+                <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-top: 20px;">
+                    <span class="status-pill {% if analysis.is_ai_generated %}critical{% else %}low{% endif %}"
+                          style="font-size: 1rem; padding: 8px 18px;">
+                        <i class="fas {% if analysis.is_ai_generated %}fa-exclamation-triangle{% else %}fa-shield-alt{% endif %} me-1"></i>
+                        {{ analysis.verdict }}
+                    </span>
+                    <span class="status-pill elevated" style="font-size: 0.9rem; padding: 8px 14px;">
+                        <i class="fas fa-microchip me-1"></i>
+                        {{ analysis.detection_mode }}
+                    </span>
+                    <span class="status-pill low" style="font-size: 0.9rem; padding: 8px 14px;">
+                        <i class="fas fa-stopwatch me-1"></i>
+                        {{ detection_time }}s
+                    </span>
+                </div>
+            </div>
+            <div class="col-lg-5">
+                <!-- Confidence Meter -->
+                <div class="panel-soft p-4 text-center">
+                    <div style="position: relative; width: 180px; height: 180px; margin: 0 auto 18px;">
+                        <svg viewBox="0 0 120 120" style="transform: rotate(-90deg);">
+                            <circle cx="60" cy="60" r="52" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="10"/>
+                            <circle cx="60" cy="60" r="52" fill="none"
+                                    stroke="{% if analysis.is_ai_generated %}var(--critical){% else %}var(--low){% endif %}"
+                                    stroke-width="10"
+                                    stroke-dasharray="{{ analysis.confidence|floatformat:0 }}% 1000"
+                                    stroke-dashoffset="0"
+                                    stroke-linecap="round"
+                                    style="transition: stroke-dasharray 1.5s ease;"/>
+                        </svg>
+                        <div style="position: absolute; inset: 0; display: grid; place-items: center;">
+                            <div>
+                                <div style="font-size: 2.6rem; font-weight: 800; line-height: 1;
+                                            color: {% if analysis.is_ai_generated %}var(--critical){% else %}var(--low){% endif %};">
+                                    {{ analysis.confidence }}%
+                                </div>
+                                <div class="muted" style="font-size: 0.85rem;">confidence</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="muted">{{ analysis.image_dimensions }} pixels</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-4 mb-4">
+        <!-- Uploaded Image Preview -->
+        <div class="col-lg-5">
+            <div class="panel p-4 h-100">
+                <div class="section-title">
+                    <h3><i class="fas fa-image me-2"></i>Uploaded Image</h3>
+                </div>
+                <div style="border-radius: 16px; overflow: hidden; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.08);">
+                    <img src="{{ MEDIA_URL }}{{ image_filename }}"
+                         alt="Uploaded image"
+                         style="width: 100%; height: auto; max-height: 500px; object-fit: contain; display: block;">
+                </div>
+                <div class="muted mt-3">
+                    <i class="fas fa-file-image me-1"></i> {{ original_image }}
+                </div>
+            </div>
+        </div>
+
+        <!-- Signal Breakdown -->
+        <div class="col-lg-7">
+            <div class="panel p-4 h-100">
+                <div class="section-title">
+                    <h3><i class="fas fa-microscope me-2"></i>Forensic Signal Breakdown</h3>
+                </div>
+
+                {% for signal in analysis.signals %}
+                <div class="panel-soft p-3 mb-3">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                        <strong>{{ signal.name }}</strong>
+                        <span class="status-pill {{ signal.tone }}">{{ signal.score }}% — {{ signal.label }}</span>
+                    </div>
+                    <div class="muted mb-2" style="font-size: 0.88rem;">{{ signal.summary }}</div>
+
+                    <!-- Score bar -->
+                    <div style="height: 6px; background: rgba(255,255,255,0.06); border-radius: 4px; overflow: hidden; margin-bottom: 10px;">
+                        <div style="height: 100%; width: {{ signal.score }}%;
+                                    border-radius: 4px;
+                                    background: {% if signal.tone == 'critical' %}var(--critical){% elif signal.tone == 'high' %}var(--high){% elif signal.tone == 'elevated' %}var(--elevated){% else %}var(--low){% endif %};
+                                    transition: width 1s ease;"></div>
+                    </div>
+
+                    <div style="font-size: 0.82rem; color: rgba(255,255,255,0.5); font-family: 'IBM Plex Mono', monospace;">
+                        {{ signal.evidence }}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Heatmap Visualization -->
+    {% if heatmap_url %}
+    <div class="panel p-4 mb-4">
+        <div class="section-title">
+            <h3><i class="fas fa-fire me-2"></i>Artifact Heatmap</h3>
+            <span class="muted">Laplacian edge-artifact visualization — brighter areas indicate sharper discontinuities</span>
+        </div>
+        <div class="row g-3">
+            <div class="col-md-6">
+                <div class="panel-soft p-3 text-center">
+                    <div class="muted mb-2">Original</div>
+                    <img src="{{ MEDIA_URL }}{{ image_filename }}"
+                         style="width: 100%; max-height: 350px; object-fit: contain; border-radius: 12px;">
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="panel-soft p-3 text-center">
+                    <div class="muted mb-2">Laplacian Heatmap</div>
+                    <img src="{{ heatmap_url }}"
+                         style="width: 100%; max-height: 350px; object-fit: contain; border-radius: 12px;">
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Assessment & Actions -->
+    <div class="row g-4 mb-4">
+        <div class="col-lg-6">
+            <div class="panel p-4 h-100">
+                <div class="section-title">
+                    <h3><i class="fas fa-gavel me-2"></i>Assessment</h3>
+                </div>
+                <div class="panel-soft p-4">
+                    {% if analysis.is_ai_generated %}
+                    <p style="color: var(--critical); font-weight: 600; font-size: 1.05rem;">
+                        <i class="fas fa-exclamation-circle me-2"></i>
+                        This image shows characteristics consistent with AI generation.
+                    </p>
+                    <p class="muted">
+                        Multiple forensic signals indicate non-natural origin. The image exhibits patterns
+                        commonly found in GAN/diffusion model outputs including
+                        {% if analysis.face_detected %}face manipulation artifacts,{% endif %}
+                        frequency domain anomalies, and unnatural noise distribution.
+                    </p>
+                    {% else %}
+                    <p style="color: var(--low); font-weight: 600; font-size: 1.05rem;">
+                        <i class="fas fa-check-circle me-2"></i>
+                        This image appears to be authentic.
+                    </p>
+                    <p class="muted">
+                        Forensic analysis shows natural image characteristics including realistic noise patterns,
+                        expected frequency distribution, and consistent edge quality across the image.
+                    </p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-6">
+            <div class="panel p-4 h-100">
+                <div class="section-title">
+                    <h3><i class="fas fa-list-check me-2"></i>Recommended Actions</h3>
+                </div>
+                {% if analysis.is_ai_generated %}
+                <div class="panel-soft p-3 mb-3">
+                    <i class="fas fa-flag tone-critical me-2"></i>
+                    Flag image for manual review by content verification team.
+                </div>
+                <div class="panel-soft p-3 mb-3">
+                    <i class="fas fa-search tone-high me-2"></i>
+                    Run reverse image search to check for original source.
+                </div>
+                <div class="panel-soft p-3 mb-3">
+                    <i class="fas fa-archive tone-elevated me-2"></i>
+                    Archive forensic evidence and hash for future matching.
+                </div>
+                {% else %}
+                <div class="panel-soft p-3 mb-3">
+                    <i class="fas fa-check tone-low me-2"></i>
+                    No immediate action required. Store for baseline comparison.
+                </div>
+                <div class="panel-soft p-3 mb-3">
+                    <i class="fas fa-eye tone-elevated me-2"></i>
+                    Continue monitoring if the image appears in conflict-related contexts.
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Analyse another -->
+    <div class="text-center mt-4">
+        <a href="{% url 'ml_app:home' %}" class="btn-drishti text-decoration-none">
+            <i class="fas fa-arrow-left me-2"></i>Analyse Another File
+        </a>
+    </div>
+</section>
+{% endblock %}

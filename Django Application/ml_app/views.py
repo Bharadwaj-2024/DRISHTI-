@@ -16,7 +16,7 @@ from django.http import HttpResponse
 from django.shortcuts import redirect, render
 from django.views.decorators.http import require_POST
 
-from .forms import VideoUploadForm
+from .forms import ImageUploadForm, VideoUploadForm
 from .models import DeepfakeModel
 
 try:
@@ -33,6 +33,11 @@ try:
     from .audio_deepfake_model import get_audio_deepfake_detector
 except Exception:
     get_audio_deepfake_detector = None
+
+try:
+    from .image_detector import analyze_image
+except Exception:
+    analyze_image = None
 
 try:
     import cv2
@@ -70,6 +75,7 @@ else:
 index_template_name = "index.html"
 predict_template_name = "predict.html"
 about_template_name = "about.html"
+image_predict_template_name = "image_predict.html"
 
 im_size = 112
 mean = [0.485, 0.456, 0.406]
@@ -456,9 +462,10 @@ def _make_signal(name, score, summary, evidence):
     }
 
 
-def _build_home_context(form, stats=None):
+def _build_home_context(form, stats=None, image_form=None):
     return {
         "form": form,
+        "image_form": image_form or ImageUploadForm(),
         "stats": stats or _get_detection_stats(),
         "mission": MISSION_BRIEF,
         "capability_cards": CAPABILITY_CARDS,
@@ -1250,8 +1257,38 @@ def index(request):
         form = VideoUploadForm()
         request.session.pop("file_name", None)
         request.session.pop("sequence_length", None)
+        request.session.pop("image_file_name", None)
         return render(request, index_template_name, _build_home_context(form))
 
+    # Check if this is an image upload
+    if "upload_image_file" in request.FILES:
+        image_form = ImageUploadForm(request.POST, request.FILES)
+        form = VideoUploadForm()
+        stats = _get_detection_stats()
+
+        if image_form.is_valid():
+            image = image_form.cleaned_data["upload_image_file"]
+            ext = image.name.rsplit(".", 1)[-1].lower() if "." in image.name else "jpg"
+
+            ALLOWED_IMG_EXT = {"jpg", "jpeg", "png", "webp", "bmp", "tiff", "tif"}
+            if ext not in ALLOWED_IMG_EXT:
+                messages.error(request, f"Unsupported image type '.{ext}'. Use JPG, PNG, or WebP.")
+                return render(request, index_template_name, _build_home_context(form, stats, image_form))
+
+            saved_name = f"uploaded_img_{int(time.time())}.{ext}"
+            save_dir = os.path.join(settings.PROJECT_DIR, "uploaded_images")
+            os.makedirs(save_dir, exist_ok=True)
+            save_path = os.path.join(save_dir, saved_name)
+
+            with open(save_path, "wb") as output_file:
+                shutil.copyfileobj(image, output_file)
+
+            request.session["image_file_name"] = save_path
+            return redirect("ml_app:image_predict")
+
+        return render(request, index_template_name, _build_home_context(form, stats, image_form))
+
+    # Video upload (existing flow)
     form = VideoUploadForm(request.POST, request.FILES)
     stats = _get_detection_stats()
 
@@ -1368,6 +1405,108 @@ def predict_page(request):
             "speedup":          speedup,
             "threat":           threat,
             "osint_context":    osint_ctx,
+        },
+    )
+
+
+def image_predict_page(request):
+    """Analyse an uploaded image for AI-generation artifacts."""
+    if "image_file_name" not in request.session:
+        messages.error(request, "Session expired. Please upload an image again.")
+        return redirect("ml_app:home")
+
+    image_path = request.session["image_file_name"]
+
+    if not os.path.exists(image_path):
+        messages.error(request, "Uploaded image not found. Please upload again.")
+        request.session.pop("image_file_name", None)
+        return redirect("ml_app:home")
+
+    t_start = time.time()
+
+    # Run image analysis
+    if analyze_image is not None:
+        try:
+            analysis = analyze_image(image_path)
+        except Exception as exc:
+            import traceback
+            print(f"[DRISHTI] image analysis error: {traceback.format_exc()}")
+            messages.error(request, f"Image analysis failed: {exc}.")
+            return redirect("ml_app:home")
+    else:
+        analysis = {
+            "available": False,
+            "is_ai_generated": False,
+            "confidence": 50.0,
+            "verdict": "UNAVAILABLE",
+            "signals": [],
+            "face_detected": False,
+            "detection_mode": "unavailable",
+            "image_dimensions": "unknown",
+            "note": "Image detector module not loaded",
+        }
+
+    detection_time = round(time.time() - t_start, 2)
+
+    # Generate heatmap for the image
+    heatmap_url = ""
+    if cv2 is not None:
+        try:
+            img = cv2.imread(image_path)
+            if img is not None:
+                gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+                lap = cv2.Laplacian(gray, cv2.CV_64F)
+                lap_abs = cv2.convertScaleAbs(lap)
+                if np is not None:
+                    lap_norm = cv2.normalize(lap_abs, None, 0, 255, cv2.NORM_MINMAX)
+                else:
+                    lap_norm = lap_abs
+                heatmap_bgr = cv2.applyColorMap(lap_norm, cv2.COLORMAP_JET)
+
+                demo_dir = os.path.join(settings.BASE_DIR, "static", "images", "demo")
+                os.makedirs(demo_dir, exist_ok=True)
+                heatmap_filename = f"img_heatmap_{int(time.time())}.jpg"
+                heatmap_path = os.path.join(demo_dir, heatmap_filename)
+                cv2.imwrite(heatmap_path, heatmap_bgr, [cv2.IMWRITE_JPEG_QUALITY, 92])
+                heatmap_url = f"/static/images/demo/{heatmap_filename}"
+        except Exception:
+            pass
+
+    # Copy uploaded image to static for display
+    image_filename = os.path.basename(image_path)
+    display_dir = os.path.join(settings.BASE_DIR, "static", "images", "demo")
+    os.makedirs(display_dir, exist_ok=True)
+    display_copy = os.path.join(display_dir, image_filename)
+    try:
+        shutil.copy2(image_path, display_copy)
+    except Exception:
+        pass
+
+    # Log result
+    log_entry = {
+        "type": "image",
+        "image": os.path.basename(image_path),
+        "verdict": analysis.get("verdict", "UNKNOWN"),
+        "confidence": analysis.get("confidence", 50.0),
+        "detection_mode": analysis.get("detection_mode", "unknown"),
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+    }
+    log_path = os.path.join(settings.PROJECT_DIR, "logs", "detections.jsonl")
+    try:
+        _append_jsonl(log_path, _sanitize_for_session(log_entry))
+    except Exception:
+        pass
+
+    return render(
+        request,
+        image_predict_template_name,
+        {
+            "analysis": analysis,
+            "original_image": os.path.basename(image_path),
+            "image_filename": f"images/demo/{image_filename}",
+            "heatmap_url": heatmap_url,
+            "MEDIA_URL": "/static/",
+            "detection_time": detection_time,
         },
     )
 
