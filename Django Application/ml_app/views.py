@@ -1881,3 +1881,102 @@ def download_pdf_report(request):
         messages.error(request, f"PDF generation failed: {exc}")
         return redirect("ml_app:report_page")
 
+
+def system_health(request):
+    """
+    System health endpoint — returns JSON with operational readiness status.
+    Checks ML model availability, dependency versions, GPU status, and
+    aggregate detection statistics for monitoring and alerting.
+    """
+    from django.http import JsonResponse
+    import platform
+
+    # ── Dependency checks ─────────────────────────────────────────────────
+    dependencies = {
+        "torch": {
+            "available": torch is not None,
+            "version": torch.__version__ if torch is not None else None,
+        },
+        "opencv": {
+            "available": cv2 is not None,
+            "version": cv2.__version__ if cv2 is not None else None,
+        },
+        "face_recognition": {
+            "available": face_recognition is not None,
+        },
+        "numpy": {
+            "available": np is not None,
+            "version": np.__version__ if np is not None else None,
+        },
+    }
+
+    # ── GPU / device status ───────────────────────────────────────────────
+    gpu_info = {"available": False, "device_name": None, "cuda_version": None}
+    if torch is not None and torch.cuda.is_available():
+        gpu_info["available"] = True
+        gpu_info["device_name"] = torch.cuda.get_device_name(0)
+        gpu_info["cuda_version"] = torch.version.cuda
+
+    # ── ML model availability ─────────────────────────────────────────────
+    model_path = get_accurate_model(20)
+    xception_ready = False
+    if get_xception_detector is not None:
+        try:
+            _xc = get_xception_detector()
+            xception_ready = _xc is not None and _xc.is_available
+        except Exception:
+            pass
+
+    audio_detector_ready = False
+    if get_audio_deepfake_detector is not None:
+        try:
+            _ad = get_audio_deepfake_detector()
+            audio_detector_ready = _ad is not None and _ad.is_available
+        except Exception:
+            pass
+
+    models = {
+        "resnet_lstm": model_path is not None,
+        "xception_net": xception_ready,
+        "audio_deepfake": audio_detector_ready,
+        "image_detector": analyze_image is not None,
+        "lip_sync": full_audio_lipsync_analysis is not None,
+    }
+
+    # ── Detection statistics ──────────────────────────────────────────────
+    stats = _get_detection_stats()
+
+    # ── Overall readiness ─────────────────────────────────────────────────
+    any_model_ready = any(models.values())
+    all_deps_ok = all(d["available"] for d in dependencies.values())
+
+    if any_model_ready and all_deps_ok:
+        status = "operational"
+    elif any_model_ready:
+        status = "degraded"
+    else:
+        status = "demo_mode"
+
+    payload = {
+        "status": status,
+        "version": "2.1.0",
+        "platform": {
+            "python": platform.python_version(),
+            "os": platform.system(),
+            "arch": platform.machine(),
+        },
+        "gpu": gpu_info,
+        "models": models,
+        "dependencies": dependencies,
+        "detection_stats": {
+            "total_scans": stats["total"],
+            "synthetic_detected": stats["fake"],
+            "authentic_detected": stats["real"],
+            "avg_confidence": stats["avg_confidence"],
+            "fake_rate_percent": stats["fake_rate"],
+        },
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+    }
+
+    return JsonResponse(payload, json_dumps_params={"indent": 2})
+

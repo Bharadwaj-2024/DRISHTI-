@@ -20,8 +20,10 @@ urlpatterns = [
     path('feedback/submit/', views.submit_feedback, name='submit_feedback'),
     path('fact-check/', views.issue_fact_check, name='fact_check'),
     path('stats/', views.stats_page, name='stats_page'),
+    path('health/', views.system_health, name='system_health'),
     path('dashboard/', views.dashboard, name='dashboard'),
     path('dashboard/login/', views.dashboard_login, name='dashboard_login'),
     path('dashboard/logout/', views.dashboard_logout, name='dashboard_logout'),
     path('cuda_full/', cuda_full, name='cuda_full'),
 ]
+
